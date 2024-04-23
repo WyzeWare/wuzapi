@@ -40,7 +40,26 @@
           }, time);
         });
       }
+      function getOSAndBrowser() {
+	  // Get OS name
+	  let osName = 'Unknown';
+	  if (navigator.appVersion.indexOf('Win') !== -1) osName = 'Windows';
+	  if (navigator.appVersion.indexOf('Linux') !== -1) osName = 'Linux';
+	  if (navigator.appVersion.indexOf('Mac') !== -1) osName = 'MacOS';
+	  if (navigator.appVersion.indexOf('X11') !== -1) osName = 'UNIX';
+	  if (navigator.appVersion.indexOf('Android') !== -1) osName = 'Android';
+	  if (navigator.appVersion.indexOf('like Mac') !== -1) osName = 'iOS';
 
+	  // Get browser name
+	  let browserName = 'Unknown';
+	  if (navigator.userAgent.indexOf('Chrome') !== -1) browserName = 'Chrome';
+	  if (navigator.userAgent.indexOf('Firefox') !== -1) browserName = 'Firefox';
+	  if (navigator.userAgent.indexOf('Safari') !== -1) browserName = 'Safari';
+	  if (navigator.userAgent.indexOf('Edge') !== -1) browserName = 'Edge';
+	  if (navigator.userAgent.indexOf('Opera') !== -1) browserName = 'Opera';
+
+	  return { osName, browserName };
+      }
       function checkStatus() {
         console.log("checkStatus");
         statusRequest().then((status) => {
@@ -90,6 +109,7 @@
 
       async function connect() {
         console.log("Connecting...");
+        const { osName, browserName } = getOSAndBrowser();
         const myHeaders = new Headers();
         myHeaders.append('token', token);
         myHeaders.append('Content-Type', 'application/json');

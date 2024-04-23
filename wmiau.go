@@ -48,62 +48,71 @@ type MyClient struct {
 
 // Connects to Whatsapp Websocket on server startup if last state was connected
 func (s *server) connectOnStartup() {
-	rows, err := s.db.Query("SELECT id,token,jid,webhook,events FROM users WHERE connected=1")
-	if err != nil {
-		log.Error().Err(err).Msg("DB Problem")
-		return
-	}
-	defer rows.Close()
-	for rows.Next() {
-		txtid := ""
-		token := ""
-		jid := ""
-		webhook := ""
-		events := ""
-		err = rows.Scan(&txtid, &token, &jid, &webhook, &events)
-		if err != nil {
-			log.Error().Err(err).Msg("DB Problem")
-			return
-		} else {
-			log.Info().Str("token", token).Msg("Connect to Whatsapp on startup")
-			v := Values{map[string]string{
-				"Id":      txtid,
-				"Jid":     jid,
-				"Webhook": webhook,
-				"Token":   token,
-				"Events":  events,
-			}}
-			userinfocache.Set(token, v, cache.NoExpiration)
-			userid, _ := strconv.Atoi(txtid)
-			// Gets and set subscription to webhook events
-			eventarray := strings.Split(events, ",")
+    rows, err := s.db.Query("SELECT id, token, jid, webhook, events, osname, platformtype FROM users WHERE connected=1")
+    if err != nil {
+        log.Error().Err(err).Msg("DB Problem")
+        return
+    }
+    defer rows.Close()
 
-			var subscribedEvents []string
-			if len(eventarray) < 1 {
-				if !Find(subscribedEvents, "All") {
-					subscribedEvents = append(subscribedEvents, "All")
-				}
-			} else {
-				for _, arg := range eventarray {
-					if !Find(messageTypes, arg) {
-						log.Warn().Str("Type",arg).Msg("Message type discarded")
-						continue
-					}
-					if !Find(subscribedEvents, arg) {
-						subscribedEvents = append(subscribedEvents, arg)
-					}
-				}
-			}
-			eventstring := strings.Join(subscribedEvents, ",")
-			log.Info().Str("events", eventstring).Str("jid",jid).Msg("Attempt to connect")
-			killchannel[userid] = make(chan bool)
-			go s.startClient(userid, jid, token, subscribedEvents)
-		}
-	}
-	err = rows.Err()
-	if err != nil {
-		log.Error().Err(err).Msg("DB Problem")
-	}
+    for rows.Next() {
+        txtid := ""
+        token := ""
+        jid := ""
+        webhook := ""
+        events := ""
+        osName := ""
+        platformType := ""
+
+        err = rows.Scan(&txtid, &token, &jid, &webhook, &events, &osName, &platformType)
+        if err != nil {
+            log.Error().Err(err).Msg("DB Problem")
+            return
+        } else {
+            log.Info().Str("token", token).Msg("Connect to Whatsapp on startup")
+            v := Values{map[string]string{
+                "Id":          txtid,
+                "Jid":         jid,
+                "Webhook":     webhook,
+                "Token":       token,
+                "Events":      events,
+                "OSName":      osName,
+                "PlatformType": platformType,
+            }}
+            userinfocache.Set(token, v, cache.NoExpiration)
+
+            userid, _ := strconv.Atoi(txtid)
+
+            // Gets and set subscription to webhook events
+            eventarray := strings.Split(events, ",")
+            var subscribedEvents []string
+            if len(eventarray) < 1 {
+                if !Find(subscribedEvents, "All") {
+                    subscribedEvents = append(subscribedEvents, "All")
+                }
+            } else {
+                for _, arg := range eventarray {
+                    if !Find(messageTypes, arg) {
+                        log.Warn().Str("Type", arg).Msg("Message type discarded")
+                        continue
+                    }
+                    if !Find(subscribedEvents, arg) {
+                        subscribedEvents = append(subscribedEvents, arg)
+                    }
+                }
+            }
+
+            eventstring := strings.Join(subscribedEvents, ",")
+            log.Info().Str("events", eventstring).Str("jid", jid).Msg("Attempt to connect")
+            killchannel[userid] = make(chan bool)
+            go s.startClient(userid, jid, token, subscribedEvents, osName, platformType)
+        }
+    }
+
+    err = rows.Err()
+    if err != nil {
+        log.Error().Err(err).Msg("DB Problem")
+    }
 }
 
 func parseJID(arg string) (types.JID, bool) {
@@ -125,7 +134,7 @@ func parseJID(arg string) (types.JID, bool) {
 	}
 }
 
-func (s *server) startClient(userID int, textjid string, token string, subscriptions []string) {
+func (s *server) startClient(userID int, textjid string, token string, subscriptions []string, osName string, platformType string) {
 
 	log.Info().Str("userid", strconv.Itoa(userID)).Str("jid",textjid).Msg("Starting websocket connection to Whatsapp")
 
@@ -159,10 +168,58 @@ func (s *server) startClient(userID int, textjid string, token string, subscript
 
 	//store.CompanionProps.PlatformType = waProto.CompanionProps_CHROME.Enum()
 	//store.CompanionProps.Os = proto.String("Mac OS")
+	// Default values
+        defaultOSName := "Mac OS 10"
+        defaultPlatformType := "CHROME"
 
-	osName := "Mac OS 10"
-	store.DeviceProps.PlatformType = waProto.DeviceProps_UNKNOWN.Enum()
-	store.DeviceProps.Os = &osName
+        // Use the provided values or default values if not provided
+        if osName == "" {
+            osName = defaultOSName
+        }
+
+        if platformType == "" {
+            platformType = defaultPlatformType
+        }
+        
+	// Define a map to map platform type strings to enum values
+	var platformTypeMap = map[string]waProto.DeviceProps_PlatformType{
+	    "UNKNOWN":          waProto.DeviceProps_UNKNOWN,
+	    "CHROME":           waProto.DeviceProps_CHROME,
+	    "FIREFOX":          waProto.DeviceProps_FIREFOX,
+	    "IE":               waProto.DeviceProps_IE,
+	    "OPERA":            waProto.DeviceProps_OPERA,
+	    "SAFARI":           waProto.DeviceProps_SAFARI,
+	    "EDGE":             waProto.DeviceProps_EDGE,
+	    "DESKTOP":          waProto.DeviceProps_DESKTOP,
+	    "IPAD":             waProto.DeviceProps_IPAD,
+	    "ANDROID_TABLET":   waProto.DeviceProps_ANDROID_TABLET,
+	    "OHANA":            waProto.DeviceProps_OHANA,
+	    "ALOHA":            waProto.DeviceProps_ALOHA,
+	    "CATALINA":         waProto.DeviceProps_CATALINA,
+	    "TCL_TV":           waProto.DeviceProps_TCL_TV,
+	    "IOS_PHONE":        waProto.DeviceProps_IOS_PHONE,
+	    "IOS_CATALYST":     waProto.DeviceProps_IOS_CATALYST,
+	    "ANDROID_PHONE":    waProto.DeviceProps_ANDROID_PHONE,
+	    "ANDROID_AMBIGUOUS":waProto.DeviceProps_ANDROID_AMBIGUOUS,
+	    "WEAR_OS":          waProto.DeviceProps_WEAR_OS,
+	    "AR_WRIST":         waProto.DeviceProps_AR_WRIST,
+	    "AR_DEVICE":        waProto.DeviceProps_AR_DEVICE,
+	    "UWP":              waProto.DeviceProps_UWP,
+	    "VR":               waProto.DeviceProps_VR,
+	}
+		
+	// Convert platformType to uppercase
+        platformType = strings.ToUpper(platformType)
+        // Retrieve the corresponding enum value from the map
+	enumValue, exists := platformTypeMap[platformType]
+	if !exists {
+	    // Handle the case when an invalid platform type is supplied
+            enumValue = waProto.DeviceProps_UNKNOWN
+	}        
+        // Set the PlatformType field of DeviceProps to the enum value
+	store.DeviceProps.PlatformType = enumValue.Enum()
+	
+        store.DeviceProps.Os = &osName
 
 	clientLog := waLog.Stdout("Client", *waDebug, true)
 	var client *whatsmeow.Client

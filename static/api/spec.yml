@@ -658,10 +658,20 @@ definitions:
     type: object
     properties:
       Subscribe:
-        type: string
-        example: ["Message","ChatPresence"]
+        type: array
+        items:
+          type: string
+        description: List of events to subscribe to (e.g., Message, ReadReceipt, Presence, HistorySync, ChatPresence)
       Immediate:
         type: boolean
+        description: If set to false, the action will wait for 10 seconds to retrieve actual connection status from WhatsApp
+      OSName:
+        type: string
+        description: The operating system name to mimic (e.g., Windows 10, Mac OS X)
+      PlatformType:
+        type: string
+        description: The platform type to mimic (e.g., CHROME, FIREFOX, UNKNOWN)
+        
   DownloadImage:
     type: object
     required:

@@ -163,6 +163,8 @@ func (s *server) Connect() http.HandlerFunc {
 	type connectStruct struct {
 		Subscribe []string
 		Immediate bool
+		OSName  string
+                PlatformType  string
 	}
 
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -215,7 +217,7 @@ func (s *server) Connect() http.HandlerFunc {
 
 			log.Info().Str("jid", jid).Msg("Attempt to connect")
 			killchannel[userid] = make(chan bool)
-			go s.startClient(userid, jid, token, subscribedEvents)
+			go s.startClient(userid, jid, token, subscribedEvents, t.OSName, t.PlatformType)
 
 			if t.Immediate == false {
 				log.Warn().Msg("Waiting 10 seconds")
