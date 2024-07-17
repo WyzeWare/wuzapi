@@ -1,0 +1,9 @@
+Package: wuzapi
+Version: 1.0
+Section: custom
+Priority: optional
+Architecture: amd64
+Essential: no
+Installed-Size: 1024
+MAINTAINER: "Buenos Aires - Argentina"
+DESCRIPTION: "WuzApi clone is a Go-based application designed to facilitate webhook interactions. It provides functionality to handle regular messages and messages with file attachments by sending POST requests to specified URLs. The application includes features to update user information, log payloads, and manage webhook calls efficiently."
