@@ -30,7 +30,7 @@ Before you can use the build script, you need to install the following tools:
 
 ## Build Script
 
-The `build_and_package.sh` script automates the process of building the application and creating packages for various platforms.
+The `./scripts/packaging/scripts/build_and_package.sh` script automates the process of building the application and creating packages for various platforms.
 
 ### Usage
 
