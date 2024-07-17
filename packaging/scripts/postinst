@@ -19,9 +19,10 @@ prompt_yes_no() {
 choose_database() {
     while true; do
         echo "Please choose a database:"
-        echo "1) PostgreSQL"
+        echo "1) PostgreSQL (default)"
         echo "2) SQLite3"
-        read -p "Enter your choice (1 or 2): " choice
+        read -p "Enter your choice (1 or 2) [1]: " choice
+        choice=${choice:-1}  # Set default to 1 if input is empty
         case $choice in
             1) echo "postgresql"; return 0 ;;
             2) echo "sqlite3"; return 0 ;;
