@@ -15,12 +15,36 @@ choose_database() {
     done
 }
 
+# Function to prompt for yes/no
+prompt_yes_no() {
+    while true; do
+        read -p "$1 (y/n): " yn
+        case $yn in
+            [Yy]*) return 0 ;;
+            [Nn]*) return 1 ;;
+            *) echo "Please answer yes or no." ;;
+        esac
+    done
+}
+
+# Check if configuration file exists
+CONFIG_FILE="/etc/wuzapi/config"
+if [ -f "$CONFIG_FILE" ]; then
+    echo "An existing configuration file was found at $CONFIG_FILE"
+    if prompt_yes_no "Do you want to override the existing configuration?"; then
+        echo "Proceeding with new configuration..."
+    else
+        echo "Keeping existing configuration. Installation completed."
+        exit 0
+    fi
+fi
+
 # Prompt user for database choice
 DB_CHOICE=$(choose_database)
 
 # Save the choice to a configuration file
 mkdir -p /etc/wuzapi
-echo "DB_TYPE=$DB_CHOICE" > /etc/wuzapi/config
+echo "DB_TYPE=$DB_CHOICE" > "$CONFIG_FILE"
 
-echo "Database choice ($DB_CHOICE) has been saved to /etc/wuzapi/config"
+echo "Database choice ($DB_CHOICE) has been saved to $CONFIG_FILE"
 echo "Wuzapi installation completed successfully!"
