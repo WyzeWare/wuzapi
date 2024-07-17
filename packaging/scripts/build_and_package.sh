@@ -30,7 +30,11 @@ create_deb() {
     # Set correct permissions for postinst script
     chmod 0755 ${APP_NAME}_deb/DEBIAN/postinst
 
-    cp packaging/debian/control ${APP_NAME}_deb/DEBIAN/control
+    # Create control file with variables replaced
+    sed -e "s/\${VERSION}/$VERSION/" \
+        -e "s/\${MAINTAINER}/$MAINTAINER/" \
+        -e "s/\${DESCRIPTION}/$DESCRIPTION/" \
+        packaging/debian/control > ${APP_NAME}_deb/DEBIAN/control
 
     dpkg-deb --build ${APP_NAME}_deb
     mv ${APP_NAME}_deb.deb ${APP_NAME}_${VERSION}_amd64.deb
