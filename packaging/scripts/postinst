@@ -1,5 +1,20 @@
 #!/bin/bash
 
+CONFIG_FILE="/etc/wuzapi/config"
+POSTGRES_CONFIG_FILE="/etc/wuzapi/postgres_config"
+
+# Function to prompt for yes/no
+prompt_yes_no() {
+    while true; do
+        read -p "$1 (y/n): " yn
+        case $yn in
+            [Yy]*) return 0 ;;
+            [Nn]*) return 1 ;;
+            *) echo "Please answer yes or no." ;;
+        esac
+    done
+}
+
 # Function to prompt for database choice
 choose_database() {
     while true; do
@@ -15,20 +30,100 @@ choose_database() {
     done
 }
 
-# Function to prompt for yes/no
-prompt_yes_no() {
-    while true; do
-        read -p "$1 (y/n): " yn
-        case $yn in
-            [Yy]*) return 0 ;;
-            [Nn]*) return 1 ;;
-            *) echo "Please answer yes or no." ;;
-        esac
-    done
+# Function to configure PostgreSQL
+configure_postgres() {
+    if [ -f "$POSTGRES_CONFIG_FILE" ]; then
+        echo "An existing PostgreSQL configuration file was found at $POSTGRES_CONFIG_FILE"
+        if prompt_yes_no "Do you want to use the existing PostgreSQL configuration?"; then
+            echo "Using existing PostgreSQL configuration."
+            return 0
+        else
+            echo "Proceeding with new PostgreSQL configuration..."
+        fi
+    fi
+
+    if prompt_yes_no "Do you want to use a local PostgreSQL instance with root access?"; then
+        # Attempt to connect to PostgreSQL as root
+        if sudo -u postgres psql -c '\q' 2>/dev/null; then
+            echo "Successfully connected to local PostgreSQL instance."
+            
+            # Handle user 'wuzapi'
+            if sudo -u postgres psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='wuzapi'" | grep -q 1; then
+                echo "User 'wuzapi' already exists."
+                if prompt_yes_no "Do you want to delete and recreate the 'wuzapi' user?"; then
+                    echo "Deleting and recreating user 'wuzapi'..."
+                    sudo -u postgres psql -c "DROP USER wuzapi;"
+                    sudo -u postgres psql -c "CREATE USER wuzapi WITH PASSWORD 'wuzapi';"
+                    wuzapi_password='wuzapi'
+                else
+                    echo "Continuing with the existing 'wuzapi' user."
+                    if prompt_yes_no "Do you want to set a new password for the 'wuzapi' user?"; then
+                        read -s -p "Enter new password for 'wuzapi' user: " wuzapi_password
+                        echo
+                        sudo -u postgres psql -c "ALTER USER wuzapi WITH PASSWORD '$wuzapi_password';"
+                    else
+                        read -s -p "Enter the current password for 'wuzapi' user: " wuzapi_password
+                        echo
+                    fi
+                fi
+            else
+                echo "Creating user 'wuzapi'..."
+                sudo -u postgres psql -c "CREATE USER wuzapi WITH PASSWORD 'wuzapi';"
+                wuzapi_password='wuzapi'
+            fi
+            
+            # Handle database 'wuzapi'
+            if sudo -u postgres psql -lqt | cut -d \| -f 1 | grep -qw wuzapi; then
+                echo "Database 'wuzapi' already exists."
+                if prompt_yes_no "Do you want to drop and recreate the 'wuzapi' database?"; then
+                    echo "Dropping and recreating database 'wuzapi'..."
+                    sudo -u postgres psql -c "DROP DATABASE wuzapi;"
+                    sudo -u postgres psql -c "CREATE DATABASE wuzapi OWNER wuzapi;"
+                else
+                    echo "Continuing with the existing 'wuzapi' database."
+                    # Check if wuzapi user is the owner
+                    if ! sudo -u postgres psql -tAc "SELECT pg_catalog.pg_get_userbyid(d.datdba) FROM pg_catalog.pg_database d WHERE d.datname = 'wuzapi';" | grep -q wuzapi; then
+                        echo "Changing owner of 'wuzapi' database to 'wuzapi' user..."
+                        sudo -u postgres psql -c "ALTER DATABASE wuzapi OWNER TO wuzapi;"
+                    fi
+                fi
+            else
+                echo "Creating database 'wuzapi'..."
+                sudo -u postgres psql -c "CREATE DATABASE wuzapi OWNER wuzapi;"
+            fi
+            
+            # Ensure wuzapi user has all privileges on wuzapi database
+            echo "Granting all privileges on 'wuzapi' database to 'wuzapi' user..."
+            sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE wuzapi TO wuzapi;"
+            
+            echo "HOST=localhost" > "$POSTGRES_CONFIG_FILE"
+            echo "USER=wuzapi" >> "$POSTGRES_CONFIG_FILE"
+            echo "PASSWORD=$wuzapi_password" >> "$POSTGRES_CONFIG_FILE"
+            echo "DATABASE=wuzapi" >> "$POSTGRES_CONFIG_FILE"
+            echo "Local PostgreSQL configuration saved."
+        else
+            echo "Failed to connect to local PostgreSQL instance. Please provide custom configuration."
+            custom_postgres_config
+        fi
+    else
+        custom_postgres_config
+    fi
+}
+
+# Function to get custom PostgreSQL configuration
+custom_postgres_config() {
+    echo "Please provide PostgreSQL configuration details:"
+    read -p "Host: " pg_host
+    read -p "Username: " pg_user
+    read -p "Password: " pg_password
+
+    echo "HOST=$pg_host" > "$POSTGRES_CONFIG_FILE"
+    echo "USER=$pg_user" >> "$POSTGRES_CONFIG_FILE"
+    echo "PASSWORD=$pg_password" >> "$POSTGRES_CONFIG_FILE"
+    echo "Custom PostgreSQL configuration saved."
 }
 
 # Check if configuration file exists
-CONFIG_FILE="/etc/wuzapi/config"
 if [ -f "$CONFIG_FILE" ]; then
     echo "An existing configuration file was found at $CONFIG_FILE"
     if prompt_yes_no "Do you want to override the existing configuration?"; then
@@ -46,5 +141,12 @@ DB_CHOICE=$(choose_database)
 mkdir -p /etc/wuzapi
 echo "DB_TYPE=$DB_CHOICE" > "$CONFIG_FILE"
 
+if [ "$DB_CHOICE" = "postgresql" ]; then
+    configure_postgres
+fi
+
 echo "Database choice ($DB_CHOICE) has been saved to $CONFIG_FILE"
+if [ "$DB_CHOICE" = "postgresql" ]; then
+    echo "PostgreSQL configuration has been saved to $POSTGRES_CONFIG_FILE"
+fi
 echo "Wuzapi installation completed successfully!"
