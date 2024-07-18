@@ -26,9 +26,11 @@ create_deb() {
 
     cp ${APP_NAME}-linux-amd64 ${APP_NAME}_deb/usr/local/bin/${APP_NAME}
     cp packaging/scripts/postinst ${APP_NAME}_deb/DEBIAN/postinst
+    cp packaging/scripts/preinst ${APP_NAME}_deb/DEBIAN/preinst
 
     # Set correct permissions for postinst script
     chmod 0755 ${APP_NAME}_deb/DEBIAN/postinst
+    chmod 0755 ${APP_NAME}_deb/DEBIAN/preinst
 
     # Create control file with variables replaced
     sed -e "s/\${VERSION}/$VERSION/" \
@@ -67,21 +69,27 @@ create_rpm() {
 # Function to create tarball for Linux/Unix
 create_tarball() {
     echo "Creating tarball..."
-    tar -czf ${APP_NAME}-${VERSION}-linux-amd64.tar.gz ${APP_NAME}-linux-amd64
+    cp packaging/scripts/preinst ./preinstall.sh
+    echo "Please run preinstall.sh before installing the application to ensure all dependencies are met." > README.txt
+    tar -czf ${APP_NAME}-${VERSION}-linux-amd64.tar.gz ${APP_NAME}-linux-amd64 preinstall.sh README.txt
     echo "Tarball created: ${APP_NAME}-${VERSION}-linux-amd64.tar.gz"
 }
 
 # Function to create ZIP for macOS
 create_macos_zip() {
     echo "Creating macOS ZIP..."
-    zip ${APP_NAME}-${VERSION}-darwin-amd64.zip ${APP_NAME}-darwin-amd64
+    cp packaging/scripts/preinst ./preinstall.sh
+    echo "Please run preinstall.sh before installing the application to ensure all dependencies are met." > README.txt
+    zip ${APP_NAME}-${VERSION}-darwin-amd64.zip ${APP_NAME}-darwin-amd64 preinstall.sh README.txt
     echo "macOS ZIP created: ${APP_NAME}-${VERSION}-darwin-amd64.zip"
 }
 
 # Function to create ZIP for Windows
 create_windows_zip() {
     echo "Creating Windows ZIP..."
-    zip ${APP_NAME}-${VERSION}-windows-amd64.zip ${APP_NAME}-windows-amd64.exe
+    cp packaging/scripts/preinst ./preinstall.sh
+    echo "Please ensure all dependencies (OpenSSL, SQLite3, etc.) are installed before running the application. On Windows, you may need to install these manually." > README.txt
+    zip ${APP_NAME}-${VERSION}-windows-amd64.zip ${APP_NAME}-windows-amd64.exe preinstall.sh README.txt
     echo "Windows ZIP created: ${APP_NAME}-${VERSION}-windows-amd64.zip"
 }
 
