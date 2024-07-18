@@ -6,7 +6,6 @@ toolchain go1.22.2
 
 require (
 	github.com/go-resty/resty/v2 v2.11.0
-	github.com/golang-migrate/migrate/v4 v4.17.1
 	github.com/gorilla/mux v1.8.0
 	github.com/justinas/alice v1.2.0
 	github.com/lib/pq v1.10.9
@@ -21,14 +20,13 @@ require (
 	modernc.org/sqlite v1.22.1
 )
 
+require golang.org/x/sync v0.5.0 // indirect
+
 require (
 	filippo.io/edwards25519 v1.0.0 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
-	github.com/golang-migrate/migrate v3.5.4+incompatible
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/gorilla/websocket v1.5.0 // indirect
-	github.com/hashicorp/errwrap v1.1.0 // indirect
-	github.com/hashicorp/go-multierror v1.1.1 // indirect
 	github.com/kballard/go-shellquote v0.0.0-20180428030007-95032a82bc51 // indirect
 	github.com/mattn/go-colorable v0.1.13 // indirect
 	github.com/mattn/go-isatty v0.0.19 // indirect
@@ -36,7 +34,6 @@ require (
 	github.com/rs/xid v1.5.0 // indirect
 	go.mau.fi/libsignal v0.1.0 // indirect
 	go.mau.fi/util v0.4.1 // indirect
-	go.uber.org/atomic v1.7.0 // indirect
 	golang.org/x/crypto v0.21.0 // indirect
 	golang.org/x/mod v0.11.0 // indirect
 	golang.org/x/net v0.21.0 // indirect

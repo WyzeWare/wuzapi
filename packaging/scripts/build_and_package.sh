@@ -48,6 +48,7 @@ create_deb() {
     # Set correct permissions for postinst script
     chmod 0755 ${APP_NAME}_deb/DEBIAN/postinst
     chmod 0755 ${APP_NAME}_deb/DEBIAN/preinst
+EOF
 
     # Create control file with variables replaced
     sed -e "s/\${VERSION}/$VERSION/" \
