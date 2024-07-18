@@ -17,16 +17,33 @@ build_multi_platform() {
     GOOS=windows GOARCH=amd64 go build -o ${APP_NAME}-windows-amd64.exe ./cmd/wuzapi
 }
 
+create_log_file() {
+    mkdir -p ./logs
+    echo "Log file created on $(date)" > ./logs/wuzapi.log
+}
+
 # Function to create Debian package
 create_deb() {
     echo "Creating Debian package..."
     mkdir -p ${APP_NAME}_deb/DEBIAN
     mkdir -p ${APP_NAME}_deb/usr/local/bin
     mkdir -p ${APP_NAME}_deb/etc/wuzapi
+    mkdir -p ${APP_NAME}_deb/var/log/wuzapi
 
     cp ${APP_NAME}-linux-amd64 ${APP_NAME}_deb/usr/local/bin/${APP_NAME}
     cp packaging/scripts/postinst ${APP_NAME}_deb/DEBIAN/postinst
     cp packaging/scripts/preinst ${APP_NAME}_deb/DEBIAN/preinst
+
+    # Create initial log file
+    echo "Log file created on $(date)" > ${APP_NAME}_deb/var/log/wuzapi/wuzapi.log
+
+    # Add log file creation to postinst
+    cat >> ${APP_NAME}_deb/DEBIAN/postinst <<EOF
+
+    # Set appropriate permissions for log directory and file
+    chown -R wuzapi:wuzapi /var/log/wuzapi
+    chmod 755 /var/log/wuzapi
+    chmod 644 /var/log/wuzapi/wuzapi.log
 
     # Set correct permissions for postinst script
     chmod 0755 ${APP_NAME}_deb/DEBIAN/postinst
@@ -69,6 +86,7 @@ create_rpm() {
 # Function to create tarball for Linux/Unix
 create_tarball() {
     echo "Creating tarball..."
+    create_log_file
     cp packaging/scripts/preinst ./preinstall.sh
     echo "Please run preinstall.sh before installing the application to ensure all dependencies are met." > README.txt
     tar -czf ${APP_NAME}-${VERSION}-linux-amd64.tar.gz ${APP_NAME}-linux-amd64 preinstall.sh README.txt
@@ -78,6 +96,7 @@ create_tarball() {
 # Function to create ZIP for macOS
 create_macos_zip() {
     echo "Creating macOS ZIP..."
+    create_log_file
     cp packaging/scripts/preinst ./preinstall.sh
     echo "Please run preinstall.sh before installing the application to ensure all dependencies are met." > README.txt
     zip ${APP_NAME}-${VERSION}-darwin-amd64.zip ${APP_NAME}-darwin-amd64 preinstall.sh README.txt
@@ -87,6 +106,7 @@ create_macos_zip() {
 # Function to create ZIP for Windows
 create_windows_zip() {
     echo "Creating Windows ZIP..."
+    create_log_file
     cp packaging/scripts/preinst ./preinstall.sh
     echo "Please ensure all dependencies (OpenSSL, SQLite3, etc.) are installed before running the application. On Windows, you may need to install these manually." > README.txt
     zip ${APP_NAME}-${VERSION}-windows-amd64.zip ${APP_NAME}-windows-amd64.exe preinstall.sh README.txt
