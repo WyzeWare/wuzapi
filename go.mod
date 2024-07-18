@@ -39,6 +39,7 @@ require (
 	golang.org/x/net v0.21.0 // indirect
 	golang.org/x/sys v0.18.0 // indirect
 	golang.org/x/tools v0.10.0 // indirect
+	gopkg.in/natefinch/lumberjack.v2 v2.2.1
 	lukechampine.com/uint128 v1.3.0 // indirect
 	modernc.org/cc/v3 v3.40.0 // indirect
 	modernc.org/ccgo/v3 v3.16.13 // indirect

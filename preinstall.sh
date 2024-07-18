@@ -33,7 +33,7 @@ install_package() {
 }
 
 # Array of required commands
-REQUIRED_COMMANDS=(openssl sqlite3 sudo psql wget golang-go dpkg-dev rpm zip)
+REQUIRED_COMMANDS=(openssl sqlite3 sudo psql wget)
 
 # Check for each required command
 for cmd in "${REQUIRED_COMMANDS[@]}"; do
@@ -50,11 +50,4 @@ for cmd in "${REQUIRED_COMMANDS[@]}"; do
     fi
 done
 
-# Verify installations
-echo "Verifying installations..."
-go version
-dpkg-deb --version
-rpm --version
-zip --version
-
-echo "All requirements have been installed."
+echo "All required commands are installed. You can now run the Wuzapi installation script."

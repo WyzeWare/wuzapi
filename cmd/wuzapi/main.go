@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"database/sql"
 	"flag"
@@ -9,20 +10,18 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
-
-	"go.mau.fi/whatsmeow/store/sqlstore"
-	waLog "go.mau.fi/whatsmeow/util/log"
-
-	"bufio"
-	"strings"
 
 	"github.com/gorilla/mux"
 	_ "github.com/lib/pq"
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/patrickmn/go-cache"
 	"github.com/rs/zerolog"
+	"go.mau.fi/whatsmeow/store/sqlstore"
+	waLog "go.mau.fi/whatsmeow/util/log"
+	"gopkg.in/natefinch/lumberjack.v2"
 	_ "modernc.org/sqlite"
 )
 
@@ -33,41 +32,24 @@ type server struct {
 }
 
 var (
-	address     = flag.String("address", "0.0.0.0", "Bind IP Address")
-	port        = flag.String("port", "8080", "Listen Port")
-	waDebug     = flag.String("wadebug", "", "Enable whatsmeow debug (INFO or DEBUG)")
-	logType     = flag.String("logtype", "console", "Type of log output (console or json)")
-	sslcert     = flag.String("sslcertificate", "", "SSL Certificate File")
-	sslprivkey  = flag.String("sslprivatekey", "", "SSL Certificate Private Key File")
-	adminToken  = flag.String("admintoken", "", "Security Token to authorize admin actions (list/create/remove users)")
-	dbtype      = flag.String("dbtype", "sqlite", "Database type (sqlite or postgres)")
-	psqlConnStr = flag.String("psqlconnstr", "", "Postgres connection string")
-	configFile  = flag.String("config", "", "Path to the configuration file")
-	container   *sqlstore.Container
+	// Flags that can be set via command line
 
+	address    = flag.String("address", "0.0.0.0", "Bind IP Address")
+	port       = flag.String("port", "8080", "Listen Port")
+	waDebug    = flag.String("wadebug", "", "Enable whatsmeow debug (INFO or DEBUG)")
+	logType    = flag.String("logtype", "console", "Type of log output (console or json)")
+	sslcert    = flag.String("sslcertificate", "", "SSL Certificate File")
+	sslprivkey = flag.String("sslprivatekey", "", "SSL Certificate Private Key File")
+	adminToken = flag.String("admintoken", "", "Security Token to authorize admin actions (list/create/remove users)")
+
+	configFile  = flag.String("config", "/etc/wuzapi/config", "Path to the configuration file")
+	postgresCfg = flag.String("postgresconfig", "/etc/wuzapi/postgres_config", "Path to the PostgreSQL configuration file")
+
+	container     *sqlstore.Container
 	killchannel   = make(map[int](chan bool))
 	userinfocache = cache.New(5*time.Minute, 10*time.Minute)
 	log           zerolog.Logger
 )
-
-func init() {
-
-	flag.Parse()
-
-	if *logType == "json" {
-		log = zerolog.New(os.Stdout).With().Timestamp().Str("role", filepath.Base(os.Args[0])).Logger()
-	} else {
-		output := zerolog.ConsoleWriter{Out: os.Stdout, TimeFormat: time.RFC3339}
-		log = zerolog.New(output).With().Timestamp().Str("role", filepath.Base(os.Args[0])).Logger()
-	}
-
-	if *adminToken == "" {
-		if v := os.Getenv("WUZAPI_ADMIN_TOKEN"); v != "" {
-			*adminToken = v
-		}
-	}
-
-}
 
 // Config represents the parsed configuration data
 type Config map[string]string
@@ -99,134 +81,78 @@ func ParseConfigFile(filename string) (Config, error) {
 	return config, nil
 }
 
-func main() {
+func init() {
+	flag.Parse()
 
+	// Set up logging to file
+	logPath := "/var/log/wuzapi/wuzapi.log"
+	if os.Getenv("WUZAPI_LOG_PATH") != "" {
+		logPath = os.Getenv("WUZAPI_LOG_PATH")
+	}
+
+	logFile := &lumberjack.Logger{
+		Filename:   logPath,
+		MaxSize:    10, // megabytes
+		MaxBackups: 3,
+		MaxAge:     28, // days
+	}
+
+	log = zerolog.New(logFile).With().Timestamp().Str("role", filepath.Base(os.Args[0])).Logger()
+}
+
+func main() {
 	ex, err := os.Executable()
 	if err != nil {
-		panic(err)
+		log.Fatal().Err(err).Msg("Failed to get executable path")
 	}
 	exPath := filepath.Dir(ex)
 
+	config, err := ParseConfigFile(*configFile)
+	if err != nil {
+		log.Fatal().Err(err).Msg("Failed to read configuration file")
+	}
+
+	dbType := config["DB_TYPE"]
 	var db *sql.DB
 
-	switch *dbtype {
-	case "sqlite":
-
-		dbDirectory := exPath + "/dbdata"
-		_, err := os.Stat(dbDirectory)
-		if os.IsNotExist(err) {
-			errDir := os.MkdirAll(dbDirectory, 0751)
-			if errDir != nil {
-				panic("Could not create dbdata directory")
-			}
-		}
-
-		db, err = sql.Open("sqlite3", "file:"+exPath+"/dbdata/users.db?_foreign_keys=on")
+	switch dbType {
+	case "sqlite3":
+		dbPath := config["DB_PATH"]
+		db, err = sql.Open("sqlite3", "file:"+dbPath+"?_foreign_keys=on")
 		if err != nil {
-			log.Fatal().Err(err).Msg("Could not open/create " + exPath + "/dbdata/users.db")
-			os.Exit(1)
-		}
-		defer db.Close()
-
-		sqlStmt := `CREATE TABLE IF NOT EXISTS users (
-	               id INTEGER NOT NULL PRIMARY KEY, 
-	               name TEXT NOT NULL, 
-	               token TEXT NOT NULL, 
-	               webhook TEXT NOT NULL default "", 
-	               jid TEXT NOT NULL default "", 
-	               qrcode TEXT NOT NULL default "", 
-	               connected INTEGER, 
-	               expiration INTEGER, 
-	               events TEXT NOT NULL default "All"
-	             );`
-		_, err = db.Exec(sqlStmt)
-		if err != nil {
-			panic(fmt.Sprintf("%q: %s\n", err, sqlStmt))
+			log.Fatal().Err(err).Msg("Could not open SQLite database")
 		}
 
-	case "postgres":
-		if *configFile == "" {
-			panic("Please specify the configuration file with --config")
-		}
-
-		config, err := ParseConfigFile(*configFile)
-		if err != nil {
-			fmt.Println("Error:", err)
-			return
-		}
-
-		// Access configuration values with underscores
-		password := config["wuzapi_postgres_password"]
-
-		// Open PostgreSQL connection
-		if *psqlConnStr == "" {
-			log.Info().Msg("WuzApi will be connected to PostgreSQL at localhost:5432 with default credentials")
-			connectionString := fmt.Sprintf("user=wuzapi password=%s dbname=wuzapi sslmode=disable", password)
-			psqlConnStr = &connectionString
+		if *waDebug == "" {
+			dbLog := waLog.Stdout("Database", *waDebug, true)
+			container, err = sqlstore.New("sqlite3", "file:"+dbPath+"?_foreign_keys=on&_busy_timeout=3000", dbLog)
 		} else {
-			log.Info().Msgf("WuzApi will be connected to PostgreSQL at %s", *psqlConnStr)
-			connectionString := fmt.Sprintf("%s password=%s", *psqlConnStr, password)
-			psqlConnStr = &connectionString
+			container, err = sqlstore.New("sqlite3", "file:"+dbPath+"?_foreign_keys=on&_busy_timeout=3000", nil)
 		}
 
-		db, err = sql.Open("postgres", *psqlConnStr)
+	case "postgresql":
+		pgConfig, err := ParseConfigFile(*postgresCfg)
+		if err != nil {
+			log.Fatal().Err(err).Msg("Failed to read PostgreSQL configuration file")
+		}
+		connectionString := fmt.Sprintf("host=%s user=%s password=%s dbname=%s sslmode=disable",
+			pgConfig["HOST"], pgConfig["USER"], pgConfig["PASSWORD"], pgConfig["DATABASE"])
+		db, err = sql.Open("postgres", connectionString)
 		if err != nil {
 			log.Fatal().Err(err).Msg("Could not open PostgreSQL database")
-			os.Exit(1)
 		}
-		defer db.Close()
 
-		// Create table if not exists
-		sqlStmt := `
-        CREATE SCHEMA IF NOT EXISTS wuzapi;
-
-        GRANT USAGE ON SCHEMA wuzapi TO wuzapi;
-        GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA wuzapi TO wuzapi;
-        GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA wuzapi TO wuzapi;
-
-        CREATE TABLE IF NOT EXISTS wuzapi.users (
-            id SERIAL PRIMARY KEY,
-            name TEXT NOT NULL,
-            token TEXT NOT NULL,
-            webhook TEXT DEFAULT '',
-            jid TEXT DEFAULT '',
-            qrcode TEXT DEFAULT '',
-            connected INTEGER,
-            expiration INTEGER,
-            events TEXT DEFAULT 'All'
-		);`
-		_, err = db.Exec(sqlStmt)
-		if err != nil {
-			panic(fmt.Sprintf("%q: %s\n", err, sqlStmt))
+		if *waDebug == "" {
+			dbLog := waLog.Stdout("Database", *waDebug, true)
+			container, err = sqlstore.New("postgres", connectionString, dbLog)
+		} else {
+			container, err = sqlstore.New("postgres", connectionString, nil)
 		}
+
 	default:
 		log.Fatal().Msg("Invalid database type specified")
-		os.Exit(1)
 	}
-
-	if *waDebug != "" {
-		dbLog := waLog.Stdout("Database", *waDebug, true)
-		var connectionString string
-		switch *dbtype {
-		case "sqlite":
-			connectionString = "file:" + exPath + "/dbdata/main.db?_foreign_keys=on&_busy_timeout=3000"
-		case "postgres":
-			connectionString = *psqlConnStr
-		}
-		container, err = sqlstore.New(*dbtype, connectionString, dbLog)
-	} else {
-		var connectionString string
-		switch *dbtype {
-		case "sqlite":
-			connectionString = "file:" + exPath + "/dbdata/main.db?_foreign_keys=on&_busy_timeout=3000"
-		case "postgres":
-			connectionString = *psqlConnStr
-		}
-		container, err = sqlstore.New(*dbtype, connectionString, nil)
-	}
-	if err != nil {
-		panic(err)
-	}
+	defer db.Close()
 
 	s := &server{
 		router: mux.NewRouter(),
@@ -235,44 +161,43 @@ func main() {
 	}
 	s.routes()
 
-	s.connectOnStartup()
-
-	srv := &http.Server{
-		Addr:    *address + ":" + *port,
-		Handler: s.router,
-	}
-
 	done := make(chan os.Signal, 1)
 	signal.Notify(done, os.Interrupt, syscall.SIGINT, syscall.SIGTERM)
 
-	go func() {
-		if *sslcert != "" {
-			if err := srv.ListenAndServeTLS(*sslcert, *sslprivkey); err != nil && err != http.ErrServerClosed {
-				//log.Fatalf("listen: %s\n", err)
-				log.Fatal().Err(err).Msg("Startup failed")
-			}
-		} else {
-			if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-				//log.Fatalf("listen: %s\n", err)
-				log.Fatal().Err(err).Msg("Startup failed")
-			}
+	var srv *http.Server
+
+	if *sslcert != "" && *sslprivkey != "" {
+		srv = &http.Server{
+			Addr:    *address + ":" + *port,
+			Handler: s.router,
 		}
-	}()
-	//wlog.Infof("Server Started. Listening on %s:%s", *address, *port)
-	log.Info().Str("address", *address).Str("port", *port).Msg("Server Started")
+		go func() {
+			if err := srv.ListenAndServeTLS(*sslcert, *sslprivkey); err != nil && err != http.ErrServerClosed {
+				log.Fatal().Err(err).Msg("Server startup failed")
+			}
+		}()
+	} else {
+		srv = &http.Server{
+			Addr:    *address + ":" + *port,
+			Handler: s.router,
+		}
+		go func() {
+			if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				log.Fatal().Err(err).Msg("Server startup failed")
+			}
+		}()
+	}
+
+	log.Info().Str("address", *address).Str("port", *port).Msg("Server started")
 
 	<-done
-	log.Info().Msg("Server Stoped")
+	log.Info().Msg("Server stopped")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer func() {
-		// extra handling here
-		cancel()
-	}()
+	defer cancel()
 
 	if err := srv.Shutdown(ctx); err != nil {
-		log.Error().Str("error", fmt.Sprintf("%+v", err)).Msg("Server Shutdown Failed")
-		os.Exit(1)
+		log.Error().Err(err).Msg("Server shutdown failed")
 	}
-	log.Info().Msg("Server Exited Properly")
+	log.Info().Msg("Server exited properly")
 }
