@@ -40,21 +40,24 @@ prompt_yes_no() {
         esac
     done
 }
-
-choose_database() {
+choose_database_message() {
     echo "Please choose a database:"
     echo "1) PostgreSQL (default)"
     echo "2) SQLite3"
+    echo "Enter your choice (1 or 2) [1]:"
+}
+
+choose_database() {
     while true; do
-        read -t $TIMEOUT -p "Enter your choice (1 or 2) [1]: " choice
+        read -t ${TIMEOUT:-30} -p "$(choose_database_message)" choice
         if [ $? -ne 0 ]; then
-            echo "No input received within $TIMEOUT seconds, defaulting to '1'."
+            echo "No input received within ${TIMEOUT:-30} seconds, defaulting to '1'."
             choice=1
         fi
         choice=${choice:-1}
         case $choice in
-            1) echo "You have chosen postgresql"; return 0 ;;
-            2) echo "You have chosen sqlite3"; return 0 ;;
+            1) echo "postgresql"; return 0 ;;
+            2) echo "sqlite3"; return 0 ;;
             *) echo "Invalid choice. Please enter 1 or 2." ;;
         esac
     done

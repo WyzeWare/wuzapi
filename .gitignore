@@ -1,3 +1,29 @@
 dbdata/
 files/
 wuzapi
+
+# Ignore binaries
+wuzapi-linux-amd64
+wuzapi-darwin-amd64
+wuzapi-windows-amd64.exe
+
+# Ignore log files
+logs/
+var/log/wuzapi/
+
+# Ignore Debian package directories and files
+wuzapi_deb/
+wuzapi_*.deb
+
+# Ignore RPM build directories and files
+rpmbuild/
+rpmbuild/RPMS/*
+
+# Ignore tarballs and ZIP files
+wuzapi-*-linux-amd64.tar.gz
+wuzapi-*-darwin-amd64.zip
+wuzapi-*-windows-amd64.zip
+
+# Ignore pre-installation script and README file
+README.txt
+

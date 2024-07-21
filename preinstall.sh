@@ -14,10 +14,15 @@ if ! id wuzapi > /dev/null 2>&1; then
     adduser --system --group --no-create-home --home /nonexistent wuzapi
 fi
 
-# Function to prompt for yes/no
+# Function to prompt for yes/no with timeout
 prompt_yes_no() {
+    local timeout_duration=30
     while true; do
-        read -p "$1 (y/n): " yn
+        read -t "$timeout_duration" -p "$1 (y/n): " yn
+        if [ $? -eq 142 ]; then
+            echo "Prompt timed out after $timeout_duration seconds. Exiting."
+            exit 1
+        fi
         case $yn in
             [Yy]*) return 0 ;;
             [Nn]*) return 1 ;;

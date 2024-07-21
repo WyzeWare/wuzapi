@@ -29,9 +29,6 @@ create_deb() {
     mkdir -p ${APP_NAME}_deb/usr/local/bin
     mkdir -p ${APP_NAME}_deb/etc/wuzapi
     mkdir -p ${APP_NAME}_deb/var/log/wuzapi
-        # Set correct permissions for postinst script
-    chmod 0755 ${APP_NAME}_deb/DEBIAN/postinst
-    chmod 0755 ${APP_NAME}_deb/DEBIAN/preinst
 
     cp ${APP_NAME}-linux-amd64 ${APP_NAME}_deb/usr/local/bin/${APP_NAME}
     cp packaging/scripts/postinst ${APP_NAME}_deb/DEBIAN/postinst
@@ -39,6 +36,10 @@ create_deb() {
 
     # Create initial log file
     echo "Log file created on $(date)" > ${APP_NAME}_deb/var/log/wuzapi/wuzapi.log
+    
+    # Set correct permissions for postinst script
+    chmod 0755 ${APP_NAME}_deb/DEBIAN/postinst
+    chmod 0755 ${APP_NAME}_deb/DEBIAN/preinst
 
     # Add log file creation to postinst
     cat >> ${APP_NAME}_deb/DEBIAN/postinst <<EOF
