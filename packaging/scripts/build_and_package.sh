@@ -29,6 +29,9 @@ create_deb() {
     mkdir -p ${APP_NAME}_deb/usr/local/bin
     mkdir -p ${APP_NAME}_deb/etc/wuzapi
     mkdir -p ${APP_NAME}_deb/var/log/wuzapi
+        # Set correct permissions for postinst script
+    chmod 0755 ${APP_NAME}_deb/DEBIAN/postinst
+    chmod 0755 ${APP_NAME}_deb/DEBIAN/preinst
 
     cp ${APP_NAME}-linux-amd64 ${APP_NAME}_deb/usr/local/bin/${APP_NAME}
     cp packaging/scripts/postinst ${APP_NAME}_deb/DEBIAN/postinst
@@ -44,10 +47,6 @@ create_deb() {
     chown -R wuzapi:wuzapi /var/log/wuzapi
     chmod 755 /var/log/wuzapi
     chmod 644 /var/log/wuzapi/wuzapi.log
-
-    # Set correct permissions for postinst script
-    chmod 0755 ${APP_NAME}_deb/DEBIAN/postinst
-    chmod 0755 ${APP_NAME}_deb/DEBIAN/preinst
 EOF
 
     # Create control file with variables replaced
