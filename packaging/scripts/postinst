@@ -3,11 +3,36 @@
 CONFIG_FILE="/etc/wuzapi/config"
 POSTGRES_CONFIG_FILE="/etc/wuzapi/postgres_config"
 SQLITE_DB_PATH="/var/lib/wuzapi/wuzapi.db"
+LOG_FILE="/var/log/wuzapi/postinstall.log"
+TIMEOUT=30  # Timeout in seconds for user prompts
 
-# Function to prompt for yes/no
+# Ensure log directory exists and is writable
+sudo mkdir -p "$(dirname "$LOG_FILE")" || { echo "Failed to create log directory"; exit 1; }
+sudo chown wuzapi:wuzapi "$(dirname "$LOG_FILE")" || { echo "Failed to change ownership of log directory"; exit 1; }
+sudo chmod 755 "$(dirname "$LOG_FILE")" || { echo "Failed to set permissions on log directory"; exit 1; }
+
+# Redirect output to log file
+exec > >(tee -a "$LOG_FILE") 2>&1
+
+log() {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1"
+}
+
+log "Starting Wuzapi post-installation script"
+
+# Ensure wuzapi user exists
+if ! id wuzapi &>/dev/null; then
+    log "Error: wuzapi user does not exist. This should have been created in preinstall."
+    exit 1
+fi
+
 prompt_yes_no() {
     while true; do
-        read -p "$1 (y/n): " yn
+        read -t $TIMEOUT -p "$1 (y/n): " yn
+        if [ $? -ne 0 ]; then
+            echo "No input received within $TIMEOUT seconds, defaulting to 'no'."
+            yn="n"
+        fi
         case $yn in
             [Yy]*) return 0 ;;
             [Nn]*) return 1 ;;
@@ -16,36 +41,34 @@ prompt_yes_no() {
     done
 }
 
-# Function to prompt for database choice
 choose_database() {
+    echo "Please choose a database:"
+    echo "1) PostgreSQL (default)"
+    echo "2) SQLite3"
     while true; do
-        echo "Please choose a database:"
-        echo "1) PostgreSQL (default)"
-        echo "2) SQLite3"
-        read -p "Enter your choice (1 or 2) [1]: " choice
-        choice=${choice:-1}  # Set default to 1 if input is empty
+        read -t $TIMEOUT -p "Enter your choice (1 or 2) [1]: " choice
+        if [ $? -ne 0 ]; then
+            echo "No input received within $TIMEOUT seconds, defaulting to '1'."
+            choice=1
+        fi
+        choice=${choice:-1}
         case $choice in
-            1) echo "postgresql"; return 0 ;;
-            2) echo "sqlite3"; return 0 ;;
+            1) echo "You have chosen postgresql"; return 0 ;;
+            2) echo "You have chosen sqlite3"; return 0 ;;
             *) echo "Invalid choice. Please enter 1 or 2." ;;
         esac
     done
 }
 
-# Function to configure SQLite
 configure_sqlite() {
-    echo "Configuring SQLite3..."
+    log "Configuring SQLite3..."
     
-    # Create directory if it doesn't exist
-    sudo mkdir -p "$(dirname "$SQLITE_DB_PATH")"
-    
-    # Set appropriate permissions
-    sudo chown -R $USER:$USER "$(dirname "$SQLITE_DB_PATH")"
-    sudo chmod 755 "$(dirname "$SQLITE_DB_PATH")"
-    
-    # Create SQLite database if it doesn't exist
+    sudo mkdir -p "$(dirname "$SQLITE_DB_PATH")" || { log "Failed to create directory for SQLite database"; exit 1; }
+    sudo chown -R $USER:$USER "$(dirname "$SQLITE_DB_PATH")" || { log "Failed to change ownership of SQLite database directory"; exit 1; }
+    sudo chmod 755 "$(dirname "$SQLITE_DB_PATH")" || { log "Failed to set permissions for SQLite database directory"; exit 1; }
+
     if [ ! -f "$SQLITE_DB_PATH" ]; then
-        echo "Creating new SQLite database at $SQLITE_DB_PATH"
+        log "Creating new SQLite database at $SQLITE_DB_PATH"
         sqlite3 "$SQLITE_DB_PATH" <<EOF
 PRAGMA foreign_keys = ON;
 CREATE TABLE IF NOT EXISTS users (
@@ -60,106 +83,95 @@ CREATE TABLE IF NOT EXISTS users (
     events TEXT DEFAULT 'All'
 );
 EOF
-        if [ $? -ne 0 ]; then
-            echo "Failed to create SQLite database. Please check your permissions and SQLite installation."
-            exit 1
-        fi
+        [ $? -ne 0 ] && { log "Failed to create SQLite database. Please check your permissions and SQLite installation."; exit 1; }
     else
-        echo "SQLite database already exists at $SQLITE_DB_PATH"
+        log "SQLite database already exists at $SQLITE_DB_PATH"
         if prompt_yes_no "Do you want to reset the existing database?"; then
-            echo "Resetting SQLite database..."
+            log "Resetting SQLite database..."
             rm "$SQLITE_DB_PATH"
             configure_sqlite
             return
         else
-            # Enable foreign key support for existing database
             sqlite3 "$SQLITE_DB_PATH" "PRAGMA foreign_keys = ON;"
         fi
     fi
-    
-    # Update config file
+
     echo "DB_TYPE=sqlite3" > "$CONFIG_FILE"
     echo "DB_PATH=$SQLITE_DB_PATH" >> "$CONFIG_FILE"
     echo "SQLITE_FOREIGN_KEYS=ON" >> "$CONFIG_FILE"
-    echo "SQLite3 configuration saved."
+    log "SQLite3 configuration saved."
 }
 
-# Function to configure PostgreSQL
 configure_postgres() {
     if [ -f "$POSTGRES_CONFIG_FILE" ]; then
-        echo "An existing PostgreSQL configuration file was found at $POSTGRES_CONFIG_FILE"
+        log "An existing PostgreSQL configuration file was found at $POSTGRES_CONFIG_FILE"
         if prompt_yes_no "Do you want to use the existing PostgreSQL configuration?"; then
-            echo "Using existing PostgreSQL configuration."
+            log "Using existing PostgreSQL configuration."
             return 0
         else
-            echo "Proceeding with new PostgreSQL configuration..."
+            log "Proceeding with new PostgreSQL configuration..."
         fi
     fi
 
     if prompt_yes_no "Do you want to use a local PostgreSQL instance with root access?"; then
-        # Attempt to connect to PostgreSQL as root
-        if sudo -u postgres psql -c '\q' 2>/dev/null; then
-            echo "Successfully connected to local PostgreSQL instance."
-            
-            # Generate a strong password
+        if sudo -u postgres psql -c '\q' &>/dev/null; then
+            log "Successfully connected to local PostgreSQL instance."
             wuzapi_password=$(openssl rand -base64 48)
 
-            # Handle user 'wuzapi'
             if sudo -u postgres psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='wuzapi'" | grep -q 1; then
-                echo "User 'wuzapi' already exists."
+                log "User 'wuzapi' already exists."
                 if prompt_yes_no "Do you want to delete and recreate the 'wuzapi' user?"; then
-                    echo "Deleting and recreating user 'wuzapi'..."
+                    log "Deleting and recreating user 'wuzapi'..."
                     sudo -u postgres psql -c "DROP USER wuzapi;"
                     sudo -u postgres psql -c "CREATE USER wuzapi WITH PASSWORD '$wuzapi_password';"
                 else
-                    echo "Continuing with the existing 'wuzapi' user."
+                    log "Continuing with the existing 'wuzapi' user."
                     if prompt_yes_no "Do you want to set a new password for the 'wuzapi' user?"; then
                         sudo -u postgres psql -c "ALTER USER wuzapi WITH PASSWORD '$wuzapi_password';"
                     else
-                        read -s -p "Enter the current password for 'wuzapi' user: " wuzapi_password
+                        read -t $TIMEOUT -s -p "Enter the current password for 'wuzapi' user: " wuzapi_password
+                        if [ $? -ne 0 ]; then
+                            echo "No input received within $TIMEOUT seconds, exiting."
+                            exit 1
+                        fi
                         echo
                     fi
                 fi
             else
-                echo "Creating user 'wuzapi'..."
+                log "Creating user 'wuzapi'..."
                 sudo -u postgres psql -c "CREATE USER wuzapi WITH PASSWORD '$wuzapi_password';"
             fi
-            
-            # Handle database 'wuzapi'
+
             if sudo -u postgres psql -lqt | cut -d \| -f 1 | grep -qw wuzapi; then
-                echo "Database 'wuzapi' already exists."
+                log "Database 'wuzapi' already exists."
                 if prompt_yes_no "Do you want to drop and recreate the 'wuzapi' database?"; then
-                    echo "Dropping and recreating database 'wuzapi'..."
+                    log "Dropping and recreating database 'wuzapi'..."
                     sudo -u postgres psql -c "DROP DATABASE wuzapi;"
                     sudo -u postgres psql -c "CREATE DATABASE wuzapi OWNER wuzapi;"
                 else
-                    echo "Continuing with the existing 'wuzapi' database."
-                    # Check if wuzapi user is the owner
+                    log "Continuing with the existing 'wuzapi' database."
                     if ! sudo -u postgres psql -tAc "SELECT pg_catalog.pg_get_userbyid(d.datdba) FROM pg_catalog.pg_database d WHERE d.datname = 'wuzapi';" | grep -q wuzapi; then
-                        echo "Changing owner of 'wuzapi' database to 'wuzapi' user..."
+                        log "Changing owner of 'wuzapi' database to 'wuzapi' user..."
                         sudo -u postgres psql -c "ALTER DATABASE wuzapi OWNER TO wuzapi;"
                     fi
                 fi
             else
-                echo "Creating database 'wuzapi'..."
+                log "Creating database 'wuzapi'..."
                 sudo -u postgres psql -c "CREATE DATABASE wuzapi OWNER wuzapi;"
             fi
-            
-            # Ensure wuzapi user has all privileges on wuzapi database
-            echo "Granting all privileges on 'wuzapi' database to 'wuzapi' user..."
+
+            log "Granting all privileges on 'wuzapi' database to 'wuzapi' user..."
             sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE wuzapi TO wuzapi;"
 
-            # Create schema and grant privileges
-            echo "Creating schema and granting privileges..."
+            log "Creating schema and granting privileges..."
             sudo -u postgres psql -d wuzapi -c "
                 CREATE SCHEMA IF NOT EXISTS wuzapi;
                 GRANT USAGE ON SCHEMA wuzapi TO wuzapi;
                 GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA wuzapi TO wuzapi;
                 GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA wuzapi TO wuzapi;
             "
-            
-            # Create users table
-            echo "Creating users table..."
+
+            log "Creating users table..."
             sudo -u postgres psql -d wuzapi -c "
                 CREATE TABLE IF NOT EXISTS wuzapi.users (
                     id SERIAL PRIMARY KEY,
@@ -173,14 +185,14 @@ configure_postgres() {
                     events TEXT DEFAULT 'All'
                 );
             "
-            
+
             echo "HOST=localhost" > "$POSTGRES_CONFIG_FILE"
             echo "USER=wuzapi" >> "$POSTGRES_CONFIG_FILE"
             echo "PASSWORD=$wuzapi_password" >> "$POSTGRES_CONFIG_FILE"
             echo "DATABASE=wuzapi" >> "$POSTGRES_CONFIG_FILE"
-            echo "Local PostgreSQL configuration saved."
+            log "Local PostgreSQL configuration saved."
         else
-            echo "Failed to connect to local PostgreSQL instance. Please provide custom configuration."
+            log "Failed to connect to local PostgreSQL instance. Please provide custom configuration."
             custom_postgres_config
         fi
     else
@@ -188,36 +200,43 @@ configure_postgres() {
     fi
 }
 
-# Function to get custom PostgreSQL configuration
 custom_postgres_config() {
-    echo "Please provide PostgreSQL configuration details:"
-    read -p "Host: " pg_host
-    read -p "Username: " pg_user
-    read -s -p "Password: " pg_password
+    log "Please provide PostgreSQL configuration details:"
+    read -t $TIMEOUT -p "Host: " pg_host
+    if [ $? -ne 0 ]; then
+        echo "No input received within $TIMEOUT seconds, exiting."
+        exit 1
+    fi
+    read -t $TIMEOUT -p "Username: " pg_user
+    if [ $? -ne 0 ]; then
+        echo "No input received within $TIMEOUT seconds, exiting."
+        exit 1
+    fi
+    read -t $TIMEOUT -s -p "Password: " pg_password
+    if [ $? -ne 0 ]; then
+        echo "No input received within $TIMEOUT seconds, exiting."
+        exit 1
+    fi
     echo
 
     echo "HOST=$pg_host" > "$POSTGRES_CONFIG_FILE"
     echo "USER=$pg_user" >> "$POSTGRES_CONFIG_FILE"
     echo "PASSWORD=$pg_password" >> "$POSTGRES_CONFIG_FILE"
-    echo "Custom PostgreSQL configuration saved."
+    log "Custom PostgreSQL configuration saved."
 }
 
-# Check if configuration file exists
 if [ -f "$CONFIG_FILE" ]; then
-    echo "An existing configuration file was found at $CONFIG_FILE"
+    log "An existing configuration file was found at $CONFIG_FILE"
     if prompt_yes_no "Do you want to override the existing configuration?"; then
-        echo "Proceeding with new configuration..."
+        log "Proceeding with new configuration..."
     else
-        echo "Keeping existing configuration. Installation completed."
+        log "Keeping existing configuration. Installation completed."
         exit 0
     fi
 fi
 
-# Prompt user for database choice
 DB_CHOICE=$(choose_database)
-
-# Save the choice to a configuration file
-mkdir -p /etc/wuzapi
+mkdir -p /etc/wuzapi || { log "Failed to create configuration directory"; exit 1; }
 echo "DB_TYPE=$DB_CHOICE" > "$CONFIG_FILE"
 
 if [ "$DB_CHOICE" = "postgresql" ]; then
@@ -226,12 +245,58 @@ elif [ "$DB_CHOICE" = "sqlite3" ]; then
     configure_sqlite
 fi
 
-echo "Database choice ($DB_CHOICE) has been saved to $CONFIG_FILE"
+log "Database choice ($DB_CHOICE) has been saved to $CONFIG_FILE"
 
 if [ "$DB_CHOICE" = "postgresql" ]; then
-    echo "PostgreSQL configuration has been saved to $POSTGRES_CONFIG_FILE"
+    log "PostgreSQL configuration has been saved to $POSTGRES_CONFIG_FILE"
 elif [ "$DB_CHOICE" = "sqlite3" ]; then
-    echo "SQLite3 configuration has been saved to $CONFIG_FILE"
+    log "SQLite3 configuration has been saved to $CONFIG_FILE"
 fi
+
+if [ ! -f "/etc/systemd/system/wuzapi.service" ]; then
+    log "Creating systemd service file"
+    sudo tee /etc/systemd/system/wuzapi.service > /dev/null <<EOF
+[Unit]
+Description=Wuzapi Service
+After=network.target
+
+[Service]
+User=wuzapi
+Group=wuzapi
+ExecStart=/usr/local/bin/wuzapi
+Restart=on-failure
+RestartSec=5
+StandardOutput=syslog
+StandardError=syslog
+SyslogIdentifier=wuzapi
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    sudo chmod 644 /etc/systemd/system/wuzapi.service
+fi
+
+log "Reloading systemd"
+sudo systemctl daemon-reload
+
+log "Enabling and starting wuzapi service"
+sudo systemctl enable wuzapi.service
+sudo systemctl start wuzapi.service
+
+if sudo systemctl is-active --quiet wuzapi.service; then
+    log "Wuzapi service is running"
+else
+    log "Warning: Wuzapi service failed to start. Please check the logs."
+fi
+
+log "Running a test command as the wuzapi user"
+sudo -u wuzapi bash <<EOF
+echo "This command is run as the wuzapi user"
+whoami
+id
+EOF
+
+log "Wuzapi post-installation completed"
+log "Log file is available at $LOG_FILE"
 
 echo "Wuzapi installation completed successfully!"
