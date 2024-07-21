@@ -1,5 +1,19 @@
 #!/bin/bash
 
+LOG_FILE="/tmp/wuzapi_preinstall.log"
+exec > >(tee -a "$LOG_FILE") 2>&1
+echo "Starting Wuzapi pre-installation script at $(date)"
+
+echo "Note: This script requires sudo privileges for package installation."
+echo "Note: This script checks for 'psql' (PostgreSQL client), but does not install the full PostgreSQL server."
+
+set -e
+
+# Check if the wuzapi user exists, create if it doesn't
+if ! id wuzapi > /dev/null 2>&1; then
+    adduser --system --group --no-create-home --home /nonexistent wuzapi
+fi
+
 # Function to prompt for yes/no
 prompt_yes_no() {
     while true; do
@@ -51,3 +65,5 @@ for cmd in "${REQUIRED_COMMANDS[@]}"; do
 done
 
 echo "All required commands are installed. You can now run the Wuzapi installation script."
+echo "Wuzapi pre-installation completed at $(date)"
+echo "Log file is available at $LOG_FILE"
