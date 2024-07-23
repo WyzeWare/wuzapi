@@ -37,18 +37,49 @@ create_deb() {
     # Create initial log file
     echo "Log file created on $(date)" > ${APP_NAME}_deb/var/log/wuzapi/wuzapi.log
     
-    # Set correct permissions for postinst script
+    # Set correct permissions for scripts
     chmod 0755 ${APP_NAME}_deb/DEBIAN/postinst
     chmod 0755 ${APP_NAME}_deb/DEBIAN/preinst
 
     # Add log file creation to postinst
     cat >> ${APP_NAME}_deb/DEBIAN/postinst <<EOF
 
-    # Set appropriate permissions for log directory and file
-    chown -R wuzapi:wuzapi /var/log/wuzapi
-    chmod 755 /var/log/wuzapi
-    chmod 644 /var/log/wuzapi/wuzapi.log
+# Set appropriate permissions for log directory and file
+chown -R wuzapi:wuzapi /var/log/wuzapi
+chmod 755 /var/log/wuzapi
+chmod 644 /var/log/wuzapi/wuzapi.log
 EOF
+
+    # Create postrm script
+    cat > ${APP_NAME}_deb/DEBIAN/postrm <<EOF
+#!/bin/sh
+set -e
+
+if [ "\$1" = "purge" ]; then
+    # Remove wuzapi files from /usr/local/bin
+    rm -f /usr/local/bin/${APP_NAME}
+    
+    # Remove wuzapi log directory
+    rm -rf /var/log/wuzapi
+    
+    # Remove wuzapi config directory
+    rm -rf /etc/wuzapi
+    
+    # Remove wuzapi config directory
+    rm -rf /var/lib/wuzapi
+
+    # Remove wuzapi user and group
+    deluser --quiet --system wuzapi >/dev/null || true
+    delgroup --quiet --system wuzapi >/dev/null || true
+fi
+
+# Remove /usr/local only if it's empty
+# rmdir --ignore-fail-on-non-empty /usr/local
+
+exit 0
+EOF
+
+    chmod 0755 ${APP_NAME}_deb/DEBIAN/postrm
 
     # Create control file with variables replaced
     sed -e "s/\${VERSION}/$VERSION/" \
