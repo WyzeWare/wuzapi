@@ -113,21 +113,27 @@ func main() {
 	}
 
 	dbType := config["DB_TYPE"]
-	var db *sql.DB
+	var appDB *sql.DB
+	var waDB *sqlstore.Container
 
 	switch dbType {
 	case "sqlite3":
-		dbPath := config["DB_PATH"]
-		db, err = sql.Open("sqlite3", "file:"+dbPath+"?_foreign_keys=on")
+		appDBPath := config["APP_DB_PATH"]
+		waDBPath := config["WA_DB_PATH"]
+
+		appDB, err = sql.Open("sqlite", "file:"+appDBPath+"?_foreign_keys=on")
 		if err != nil {
-			log.Fatal().Err(err).Msg("Could not open SQLite database")
+			log.Fatal().Err(err).Msg("Could not open SQLite application database")
 		}
 
-		if *waDebug == "" {
+		if *waDebug != "" {
 			dbLog := waLog.Stdout("Database", *waDebug, true)
-			container, err = sqlstore.New("sqlite3", "file:"+dbPath+"?_foreign_keys=on&_busy_timeout=3000", dbLog)
+			waDB, err = sqlstore.New("sqlite3", "file:"+waDBPath+"?_foreign_keys=on&_busy_timeout=3000", dbLog)
 		} else {
-			container, err = sqlstore.New("sqlite3", "file:"+dbPath+"?_foreign_keys=on&_busy_timeout=3000", nil)
+			waDB, err = sqlstore.New("sqlite3", "file:"+waDBPath+"?_foreign_keys=on&_busy_timeout=3000", nil)
+		}
+		if err != nil {
+			log.Fatal().Err(err).Msg("Could not open SQLite WhatsApp database")
 		}
 
 	case "postgresql":
@@ -135,31 +141,41 @@ func main() {
 		if err != nil {
 			log.Fatal().Err(err).Msg("Failed to read PostgreSQL configuration file")
 		}
-		connectionString := fmt.Sprintf("host=%s user=%s password=%s dbname=%s sslmode=disable",
-			pgConfig["HOST"], pgConfig["USER"], pgConfig["PASSWORD"], pgConfig["DATABASE"])
-		db, err = sql.Open("postgres", connectionString)
+
+		appConnectionString := fmt.Sprintf("host=%s user=%s password=%s dbname=%s sslmode=disable",
+			pgConfig["HOST"], pgConfig["USER"], pgConfig["PASSWORD"], pgConfig["APP_DATABASE"])
+		waConnectionString := fmt.Sprintf("host=%s user=%s password=%s dbname=%s sslmode=disable",
+			pgConfig["HOST"], pgConfig["USER"], pgConfig["PASSWORD"], pgConfig["WA_DATABASE"])
+
+		appDB, err = sql.Open("postgres", appConnectionString)
 		if err != nil {
-			log.Fatal().Err(err).Msg("Could not open PostgreSQL database")
+			log.Fatal().Err(err).Msg("Could not open PostgreSQL application database")
 		}
 
-		if *waDebug == "" {
+		if *waDebug != "" {
 			dbLog := waLog.Stdout("Database", *waDebug, true)
-			container, err = sqlstore.New("postgres", connectionString, dbLog)
+			waDB, err = sqlstore.New("postgres", waConnectionString, dbLog)
 		} else {
-			container, err = sqlstore.New("postgres", connectionString, nil)
+			waDB, err = sqlstore.New("postgres", waConnectionString, nil)
+		}
+		if err != nil {
+			log.Fatal().Err(err).Msg("Could not open PostgreSQL WhatsApp database")
 		}
 
 	default:
 		log.Fatal().Msg("Invalid database type specified")
 	}
-	defer db.Close()
+	defer appDB.Close()
 
 	s := &server{
 		router: mux.NewRouter(),
-		db:     db,
+		db:     appDB,
 		exPath: exPath,
 	}
 	s.routes()
+
+	// Store waDB in a package-level variable or in a context
+	container = waDB
 
 	s.connectOnStartup()
 

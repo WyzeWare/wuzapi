@@ -2,8 +2,10 @@
 
 CONFIG_FILE="/etc/wuzapi/config"
 POSTGRES_CONFIG_FILE="/etc/wuzapi/postgres_config"
-SQLITE_DB_PATH="/var/lib/wuzapi/wuzapi.db"
+SQLITE_APP_DB_PATH="/var/lib/wuzapi/app.db"
+SQLITE_WA_DB_PATH="/var/lib/wuzapi/wa.db"
 LOG_FILE="/var/log/wuzapi/postinstall.log"
+USER="wuzapi"
 TIMEOUT=30  # Timeout in seconds for user prompts
 
 # Ensure log directory exists and is writable
@@ -65,19 +67,23 @@ choose_database() {
 
 configure_sqlite() {
     log "Configuring SQLite3..."
-    
-    sudo mkdir -p "$(dirname "$SQLITE_DB_PATH")" || { log "Failed to create directory for SQLite database"; exit 1; }
-    sudo chown -R $USER:$USER "$(dirname "$SQLITE_DB_PATH")" || { log "Failed to change ownership of SQLite database directory"; exit 1; }
-    sudo chmod 755 "$(dirname "$SQLITE_DB_PATH")" || { log "Failed to set permissions for SQLite database directory"; exit 1; }
 
-    if [ ! -f "$SQLITE_DB_PATH" ]; then
-        log "Creating new SQLite database at $SQLITE_DB_PATH"
-        sqlite3 "$SQLITE_DB_PATH" <<EOF
+    sudo mkdir -p "$(dirname "$SQLITE_APP_DB_PATH")" || { log "Failed to create directory for SQLite database"; exit 1; }
+    sudo chown -R $USER:$USER "$(dirname "$SQLITE_APP_DB_PATH")" || { log "Failed to change ownership of SQLite database directory"; exit 1; }
+    sudo chmod 755 "$(dirname "$SQLITE_APP_DB_PATH")" || { log "Failed to set permissions for SQLite database directory"; exit 1; }
+    
+    sudo mkdir -p "$(dirname "$SQLITE_WA_DB_PATH")" || { log "Failed to create directory for SQLite database"; exit 1; }
+    sudo chown -R $USER:$USER "$(dirname "$SQLITE_WA_DB_PATH")" || { log "Failed to change ownership of SQLite database directory"; exit 1; }
+    sudo chmod 755 "$(dirname "$SQLITE_WA_DB_PATH")" || { log "Failed to set permissions for SQLite database directory"; exit 1; }
+
+if [ ! -f "$SQLITE_APP_DB_PATH" ]; then
+    log "Creating new SQLite database at $SQLITE_APP_DB_PATH"
+    if sudo -u wuzapi sqlite3 "$SQLITE_APP_DB_PATH" <<EOF
 PRAGMA foreign_keys = ON;
 CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
-    token TEXT NOT NULL,
+    token TEXT NOT NULL UNIQUE,
     webhook TEXT DEFAULT '',
     jid TEXT DEFAULT '',
     qrcode TEXT DEFAULT '',
@@ -86,21 +92,88 @@ CREATE TABLE IF NOT EXISTS users (
     events TEXT DEFAULT 'All'
 );
 EOF
-        [ $? -ne 0 ] && { log "Failed to create SQLite database. Please check your permissions and SQLite installation."; exit 1; }
+    then
+        log "SQLite database created successfully with unique token"
+        sudo chown wuzapi:wuzapi "$SQLITE_APP_DB_PATH"
+        sudo chmod 640 "$SQLITE_APP_DB_PATH"
+        log "Permissions set on $SQLITE_APP_DB_PATH"
     else
-        log "SQLite database already exists at $SQLITE_DB_PATH"
-        if prompt_yes_no "Do you want to reset the existing database?"; then
-            log "Resetting SQLite database..."
-            rm "$SQLITE_DB_PATH"
-            configure_sqlite
-            return
+        log "Failed to create SQLite database"
+        exit 1
+    fi
+else
+    log "SQLite database already exists at $SQLITE_APP_DB_PATH"
+    
+    # Add UNIQUE constraint to existing table if it doesn't already exist
+    if ! sudo -u wuzapi sqlite3 "$SQLITE_APP_DB_PATH" "PRAGMA index_list('users');" | grep -q "token"; then
+        log "Adding UNIQUE constraint to token in existing database"
+        if sudo -u wuzapi sqlite3 "$SQLITE_APP_DB_PATH" <<EOF
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_users_token ON users(token);
+EOF
+        then
+            log "UNIQUE constraint added successfully"
         else
-            sqlite3 "$SQLITE_DB_PATH" "PRAGMA foreign_keys = ON;"
+            log "Failed to add UNIQUE constraint to existing database"
+            exit 1
         fi
+    else
+        log "UNIQUE constraint on token already exists"
     fi
 
+    if prompt_yes_no "Do you want to reset the existing database?"; then
+        log "Resetting SQLite database..."
+        rm "$SQLITE_APP_DB_PATH"
+        rm "$SQLITE_WA_DB_PATH"
+        configure_sqlite
+        return
+    else
+        sqlite3 "$SQLITE_APP_DB_PATH" "PRAGMA foreign_keys = ON;"
+        sqlite3 "$SQLITE_WA_DB_PATH" "PRAGMA foreign_keys = ON;"
+    fi
+fi
+
+# Final check
+if [ ! -f "$SQLITE_APP_DB_PATH" ]; then
+    log "Failed to create SQLite database. Please check your permissions and SQLite installation."
+    exit 1
+fi
+
+# Check if wuzapi user exists
+if id "wuzapi" &>/dev/null; then
+    log "User 'wuzapi' exists"
+    user_info=$(id wuzapi)
+    log "User details: $user_info"
+else
+    log "Error: User 'wuzapi' does not exist."
+    log "Attempting to create user 'wuzapi'..."
+    if sudo useradd -r -s /bin/false wuzapi; then
+        log "User 'wuzapi' created successfully"
+    else
+        log "Failed to create user 'wuzapi'. Please create this user manually and run the script again."
+        exit 1
+    fi
+fi
+
+# Verify user's ability to access required directories
+if sudo -u wuzapi test -w /var/lib/wuzapi; then
+    log "User 'wuzapi' has write access to /var/lib/wuzapi"
+else
+    log "Error: User 'wuzapi' does not have write access to /var/lib/wuzapi"
+    log "Attempting to fix permissions..."
+    sudo chown -R wuzapi:wuzapi /var/lib/wuzapi
+    sudo chmod -R 755 /var/lib/wuzapi
+    if sudo -u wuzapi test -w /var/lib/wuzapi; then
+        log "Permissions fixed successfully"
+    else
+        log "Failed to fix permissions. Please check and fix manually."
+        exit 1
+    fi
+fi
+
     echo "DB_TYPE=sqlite3" > "$CONFIG_FILE"
-    echo "DB_PATH=$SQLITE_DB_PATH" >> "$CONFIG_FILE"
+    # In the configure_sqlite function:
+    echo "APP_DB_PATH=$SQLITE_APP_DB_PATH" >> "$CONFIG_FILE"
+    echo "WA_DB_PATH=$SQLITE_WA_DB_PATH" >> "$CONFIG_FILE"
     echo "SQLITE_FOREIGN_KEYS=ON" >> "$CONFIG_FILE"
     log "SQLite3 configuration saved."
 }
@@ -159,27 +232,34 @@ configure_postgres() {
                     fi
                 fi
             else
-                log "Creating database 'wuzapi'..."
-                sudo -u postgres psql -c "CREATE DATABASE wuzapi OWNER wuzapi;"
+                log "Creating databases 'wuzapi_app' and 'wuzapi_wa'..."
+                sudo -u postgres psql -c "CREATE DATABASE wuzapi_app OWNER wuzapi;"
+                sudo -u postgres psql -c "CREATE DATABASE wuzapi_wa OWNER wuzapi;"
+
+                log "Granting all privileges on 'wuzapi_app' and 'wuzapi_wa' databases to 'wuzapi' user..."
+                sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE wuzapi_app TO wuzapi;"
+                sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE wuzapi_wa TO wuzapi;"
             fi
 
             log "Granting all privileges on 'wuzapi' database to 'wuzapi' user..."
             sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE wuzapi TO wuzapi;"
 
-            log "Creating schema and granting privileges..."
-            sudo -u postgres psql -d wuzapi -c "
+            log "Creating schema and granting privileges for wuzapi_app..."
+            sudo -u postgres psql -d wuzapi_app -c "
                 CREATE SCHEMA IF NOT EXISTS wuzapi;
                 GRANT USAGE ON SCHEMA wuzapi TO wuzapi;
                 GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA wuzapi TO wuzapi;
                 GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA wuzapi TO wuzapi;
             "
 
-            log "Creating users table..."
-            sudo -u postgres psql -d wuzapi -c "
+            log "Creating users table in wuzapi_app..."
+            if sudo -u postgres psql -d wuzapi_app -c "
+                CREATE SCHEMA IF NOT EXISTS wuzapi;
+                
                 CREATE TABLE IF NOT EXISTS wuzapi.users (
                     id SERIAL PRIMARY KEY,
                     name TEXT NOT NULL,
-                    token TEXT NOT NULL,
+                    token TEXT NOT NULL UNIQUE,
                     webhook TEXT DEFAULT '',
                     jid TEXT DEFAULT '',
                     qrcode TEXT DEFAULT '',
@@ -187,13 +267,34 @@ configure_postgres() {
                     expiration INTEGER,
                     events TEXT DEFAULT 'All'
                 );
-            "
 
+                -- Create an index on the token for faster lookups
+                CREATE INDEX IF NOT EXISTS idx_users_token ON wuzapi.users(token);
+
+                -- Grant necessary permissions to the wuzapi user
+                GRANT ALL PRIVILEGES ON SCHEMA wuzapi TO wuzapi;
+                GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA wuzapi TO wuzapi;
+                GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA wuzapi TO wuzapi;
+            "; then
+                log "PostgreSQL table created successfully with unique token"
+            else
+                log "Failed to create PostgreSQL table"
+                exit 1
+            fi
+
+            log "Creating schema for wuzapi_wa..."
+            sudo -u postgres psql -d wuzapi_wa -c "
+                CREATE SCHEMA IF NOT EXISTS whatsmeow;
+                GRANT USAGE ON SCHEMA whatsmeow TO wuzapi;
+                GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA whatsmeow TO wuzapi;
+                GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA whatsmeow TO wuzapi;
+            "
             echo "HOST=localhost" > "$POSTGRES_CONFIG_FILE"
             echo "USER=wuzapi" >> "$POSTGRES_CONFIG_FILE"
             echo "PASSWORD=$wuzapi_password" >> "$POSTGRES_CONFIG_FILE"
-            echo "DATABASE=wuzapi" >> "$POSTGRES_CONFIG_FILE"
-            log "Local PostgreSQL configuration saved."
+            echo "APP_DATABASE=wuzapi_app" >> "$POSTGRES_CONFIG_FILE"
+            echo "WA_DATABASE=wuzapi_wa" >> "$POSTGRES_CONFIG_FILE"
+            log "PostgreSQL configuration saved."
         else
             log "Failed to connect to local PostgreSQL instance. Please provide custom configuration."
             custom_postgres_config
