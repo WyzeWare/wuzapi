@@ -1,6 +1,5 @@
 dbdata/
 files/
-wuzapi
 
 # Ignore binaries
 wuzapi-linux-amd64
