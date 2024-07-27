@@ -398,6 +398,7 @@ sudo systemctl daemon-reload
 log "Enabling and starting wuzapi service"
 sudo systemctl enable wuzapi.service
 sudo systemctl start wuzapi.service
+sudo systemctl restart wuzapi.service
 
 if sudo systemctl is-active --quiet wuzapi.service; then
     log "Wuzapi service is running"
