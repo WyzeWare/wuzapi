@@ -190,115 +190,127 @@ configure_postgres() {
     fi
 
     if prompt_yes_no "Do you want to use a local PostgreSQL instance with root access?"; then
-        if sudo -u postgres psql -c '\q' &>/dev/null; then
-            log "Successfully connected to local PostgreSQL instance."
-            wuzapi_password=$(openssl rand -base64 48)
-
-            if sudo -u postgres psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='wuzapi'" | grep -q 1; then
-                log "User 'wuzapi' already exists."
-                if prompt_yes_no "Do you want to delete and recreate the 'wuzapi' user?"; then
-                    log "Deleting and recreating user 'wuzapi'..."
-                    sudo -u postgres psql -c "DROP USER wuzapi;"
-                    sudo -u postgres psql -c "CREATE USER wuzapi WITH PASSWORD '$wuzapi_password';"
-                else
-                    log "Continuing with the existing 'wuzapi' user."
-                    if prompt_yes_no "Do you want to set a new password for the 'wuzapi' user?"; then
-                        sudo -u postgres psql -c "ALTER USER wuzapi WITH PASSWORD '$wuzapi_password';"
-                    else
-                        read -t $TIMEOUT -s -p "Enter the current password for 'wuzapi' user: " wuzapi_password
-                        if [ $? -ne 0 ]; then
-                            echo "No input received within $TIMEOUT seconds, exiting."
-                            exit 1
-                        fi
-                        echo
-                    fi
-                fi
-            else
-                log "Creating user 'wuzapi'..."
-                sudo -u postgres psql -c "CREATE USER wuzapi WITH PASSWORD '$wuzapi_password';"
-            fi
-
-            if sudo -u postgres psql -lqt | cut -d \| -f 1 | grep -qw wuzapi; then
-                log "Database 'wuzapi' already exists."
-                if prompt_yes_no "Do you want to drop and recreate the 'wuzapi' database?"; then
-                    log "Dropping and recreating database 'wuzapi'..."
-                    sudo -u postgres psql -c "DROP DATABASE wuzapi;"
-                    sudo -u postgres psql -c "CREATE DATABASE wuzapi OWNER wuzapi;"
-                else
-                    log "Continuing with the existing 'wuzapi' database."
-                    if ! sudo -u postgres psql -tAc "SELECT pg_catalog.pg_get_userbyid(d.datdba) FROM pg_catalog.pg_database d WHERE d.datname = 'wuzapi';" | grep -q wuzapi; then
-                        log "Changing owner of 'wuzapi' database to 'wuzapi' user..."
-                        sudo -u postgres psql -c "ALTER DATABASE wuzapi OWNER TO wuzapi;"
-                    fi
-                fi
-            else
-                log "Creating databases 'wuzapi_app' and 'wuzapi_wa'..."
-                sudo -u postgres psql -c "CREATE DATABASE wuzapi_app OWNER wuzapi;"
-                sudo -u postgres psql -c "CREATE DATABASE wuzapi_wa OWNER wuzapi;"
-
-                log "Granting all privileges on 'wuzapi_app' and 'wuzapi_wa' databases to 'wuzapi' user..."
-                sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE wuzapi_app TO wuzapi;"
-                sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE wuzapi_wa TO wuzapi;"
-            fi
-
-            log "Granting all privileges on 'wuzapi' database to 'wuzapi' user..."
-            sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE wuzapi TO wuzapi;"
-
-            log "Creating schema and granting privileges for wuzapi_app..."
-            sudo -u postgres psql -d wuzapi_app -c "
-                CREATE SCHEMA IF NOT EXISTS wuzapi;
-                GRANT USAGE ON SCHEMA wuzapi TO wuzapi;
-                GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA wuzapi TO wuzapi;
-                GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA wuzapi TO wuzapi;
-            "
-
-            log "Creating users table in wuzapi_app..."
-            if sudo -u postgres psql -d wuzapi_app -c "
-                CREATE SCHEMA IF NOT EXISTS wuzapi;
-                
-                CREATE TABLE IF NOT EXISTS wuzapi.users (
-                    id SERIAL PRIMARY KEY,
-                    name TEXT NOT NULL,
-                    token TEXT NOT NULL UNIQUE,
-                    webhook TEXT DEFAULT '',
-                    jid TEXT DEFAULT '',
-                    qrcode TEXT DEFAULT '',
-                    connected INTEGER,
-                    expiration INTEGER,
-                    events TEXT DEFAULT 'All'
-                );
-
-                -- Create an index on the token for faster lookups
-                CREATE INDEX IF NOT EXISTS idx_users_token ON wuzapi.users(token);
-
-                -- Grant necessary permissions to the wuzapi user
-                GRANT ALL PRIVILEGES ON SCHEMA wuzapi TO wuzapi;
-                GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA wuzapi TO wuzapi;
-                GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA wuzapi TO wuzapi;
-            "; then
-                log "PostgreSQL table created successfully with unique token"
-            else
-                log "Failed to create PostgreSQL table"
-                exit 1
-            fi
-
-            log "Creating schema for wuzapi_wa..."
-            sudo -u postgres psql -d wuzapi_wa -c "
-                CREATE SCHEMA IF NOT EXISTS whatsmeow;
-                GRANT USAGE ON SCHEMA whatsmeow TO wuzapi;
-                GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA whatsmeow TO wuzapi;
-                GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA whatsmeow TO wuzapi;
-            "
-            echo "HOST=localhost" > "$POSTGRES_CONFIG_FILE"
-            echo "USER=wuzapi" >> "$POSTGRES_CONFIG_FILE"
-            echo "PASSWORD=$wuzapi_password" >> "$POSTGRES_CONFIG_FILE"
-            echo "APP_DATABASE=wuzapi_app" >> "$POSTGRES_CONFIG_FILE"
-            echo "WA_DATABASE=wuzapi_wa" >> "$POSTGRES_CONFIG_FILE"
-            log "PostgreSQL configuration saved."
-        else
+        if ! sudo -u postgres psql -c '\q' &>/dev/null; then
             log "Failed to connect to local PostgreSQL instance. Please provide custom configuration."
             custom_postgres_config
+            return
         fi
+        
+        log "Successfully connected to local PostgreSQL instance."
+        wuzapi_password=$(openssl rand -base64 48)
+
+        # Function to execute PostgreSQL commands
+        pg_execute() {
+            sudo -u postgres psql -c "$1"
+        }
+
+        # Function to execute PostgreSQL commands on a specific database
+        pg_execute_db() {
+            sudo -u postgres psql -d "$1" -c "$2"
+        }
+
+        # Terminate connections and drop databases if they exist
+        for db in wuzapi_app wuzapi_wa; do
+            if pg_execute "SELECT 1 FROM pg_database WHERE datname='$db'" | grep -q 1; then
+                log "Database '$db' exists."
+                if prompt_yes_no "Do you want to drop and recreate the '$db' database?"; then
+                    log "Dropping database '$db'..."
+                    pg_execute "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '$db';"
+                    pg_execute "DROP DATABASE IF EXISTS $db;"
+                else
+                    log "Continuing with the existing '$db' database."
+                fi
+            fi
+        done
+
+        # Now handle the user
+        if pg_execute "SELECT 1 FROM pg_roles WHERE rolname='wuzapi'" | grep -q 1; then
+            log "User 'wuzapi' exists."
+            if prompt_yes_no "Do you want to delete and recreate the 'wuzapi' user?"; then
+                log "Deleting user 'wuzapi'..."
+                pg_execute "REASSIGN OWNED BY wuzapi TO postgres;"
+                pg_execute "DROP OWNED BY wuzapi;"
+                pg_execute "DROP USER IF EXISTS wuzapi;"
+                log "Creating user 'wuzapi'..."
+                pg_execute "CREATE USER wuzapi WITH PASSWORD '$wuzapi_password';"
+            else
+                log "Continuing with the existing 'wuzapi' user."
+                if prompt_yes_no "Do you want to set a new password for the 'wuzapi' user?"; then
+                    pg_execute "ALTER USER wuzapi WITH PASSWORD '$wuzapi_password';"
+                else
+                    read -t $TIMEOUT -s -p "Enter the current password for 'wuzapi' user: " wuzapi_password
+                    if [ $? -ne 0 ]; then
+                        echo "No input received within $TIMEOUT seconds, exiting."
+                        exit 1
+                    fi
+                    echo
+                fi
+            fi
+        else
+            log "Creating user 'wuzapi'..."
+            pg_execute "CREATE USER wuzapi WITH PASSWORD '$wuzapi_password';"
+        fi
+
+        # Now recreate the databases
+        for db in wuzapi_app wuzapi_wa; do
+            if ! pg_execute "SELECT 1 FROM pg_database WHERE datname='$db'" | grep -q 1; then
+                log "Creating database '$db'..."
+                pg_execute "CREATE DATABASE $db OWNER wuzapi;"
+            fi
+            log "Granting all privileges on '$db' database to 'wuzapi' user..."
+            pg_execute "GRANT ALL PRIVILEGES ON DATABASE $db TO wuzapi;"
+        done
+
+        log "Creating schema and granting privileges for wuzapi_app..."
+        pg_execute_db "wuzapi_app" "
+            CREATE SCHEMA IF NOT EXISTS wuzapi;
+            GRANT USAGE ON SCHEMA wuzapi TO wuzapi;
+            GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA wuzapi TO wuzapi;
+            GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA wuzapi TO wuzapi;
+        "
+
+        log "Creating users table in wuzapi_app..."
+        if pg_execute_db "wuzapi_app" "
+            CREATE SCHEMA IF NOT EXISTS wuzapi;
+            
+            CREATE TABLE IF NOT EXISTS wuzapi.users (
+                id SERIAL PRIMARY KEY,
+                name TEXT NOT NULL,
+                token TEXT NOT NULL UNIQUE,
+                webhook TEXT DEFAULT '',
+                jid TEXT DEFAULT '',
+                qrcode TEXT DEFAULT '',
+                connected INTEGER,
+                expiration INTEGER,
+                events TEXT DEFAULT 'All'
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_users_token ON wuzapi.users(token);
+
+            GRANT ALL PRIVILEGES ON SCHEMA wuzapi TO wuzapi;
+            GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA wuzapi TO wuzapi;
+            GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA wuzapi TO wuzapi;
+        "; then
+            log "PostgreSQL table created successfully with unique token"
+        else
+            log "Failed to create PostgreSQL table"
+            exit 1
+        fi
+
+        log "Creating schema for wuzapi_wa..."
+        pg_execute_db "wuzapi_wa" "
+            CREATE SCHEMA IF NOT EXISTS whatsmeow;
+            GRANT USAGE ON SCHEMA whatsmeow TO wuzapi;
+            GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA whatsmeow TO wuzapi;
+            GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA whatsmeow TO wuzapi;
+        "
+
+        echo "HOST=localhost" > "$POSTGRES_CONFIG_FILE"
+        echo "USER=wuzapi" >> "$POSTGRES_CONFIG_FILE"
+        echo "PASSWORD=$wuzapi_password" >> "$POSTGRES_CONFIG_FILE"
+        echo "APP_DATABASE=wuzapi_app" >> "$POSTGRES_CONFIG_FILE"
+        echo "WA_DATABASE=wuzapi_wa" >> "$POSTGRES_CONFIG_FILE"
+        log "PostgreSQL configuration saved."
     else
         custom_postgres_config
     fi
