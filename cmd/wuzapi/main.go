@@ -45,6 +45,7 @@ var (
 	configFile  = flag.String("config", "/etc/wuzapi/config", "Path to the configuration file")
 	postgresCfg = flag.String("postgresconfig", "/etc/wuzapi/postgres_config", "Path to the PostgreSQL configuration file")
 
+	dbType        string
 	container     *sqlstore.Container
 	killchannel   = make(map[int](chan bool))
 	userinfocache = cache.New(5*time.Minute, 10*time.Minute)
@@ -112,7 +113,7 @@ func main() {
 		log.Fatal().Err(err).Msg("Failed to read configuration file")
 	}
 
-	dbType := config["DB_TYPE"]
+	dbType = config["DB_TYPE"]
 	var appDB *sql.DB
 	var waDB *sqlstore.Container
 
@@ -165,7 +166,7 @@ func main() {
 	default:
 		log.Fatal().Msg("Invalid database type specified")
 	}
-	defer appDB.Close()
+	//	defer appDB.Close()
 
 	s := &server{
 		router: mux.NewRouter(),
