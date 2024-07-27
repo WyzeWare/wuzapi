@@ -63,7 +63,19 @@ func (s *server) authalice(next http.Handler) http.Handler {
 		if !found {
 			log.Info().Msg("Looking for user information in DB")
 			// Checks DB from matching user and store user values in context
-			rows, err := s.db.Query("SELECT id,webhook,jid,events FROM users WHERE token=? LIMIT 1", token)
+			var rows *sql.Rows
+			var err error
+
+			switch dbType {
+			case "sqlite3":
+				rows, err = s.db.Query("SELECT id, webhook, jid, events FROM users WHERE token = ? LIMIT 1", token)
+			case "postgresql":
+				rows, err = s.db.Query("SELECT id, webhook, jid, events FROM users WHERE token = $1 LIMIT 1", token)
+			default:
+				s.Respond(w, r, http.StatusInternalServerError, fmt.Errorf("unsupported database type: %s", dbType))
+				return
+			}
+
 			if err != nil {
 				s.Respond(w, r, http.StatusInternalServerError, err)
 				return
@@ -121,12 +133,25 @@ func (s *server) auth(handler http.HandlerFunc) http.HandlerFunc {
 		if !found {
 			log.Info().Msg("Looking for user information in DB")
 			// Checks DB from matching user and store user values in context
-			rows, err := s.db.Query("SELECT id,webhook,jid,events FROM users WHERE token=? LIMIT 1", token)
+			var rows *sql.Rows
+			var err error
+
+			switch dbType {
+			case "sqlite3":
+				rows, err = s.db.Query("SELECT id, webhook, jid, events FROM users WHERE token = ? LIMIT 1", token)
+			case "postgresql":
+				rows, err = s.db.Query("SELECT id, webhook, jid, events FROM users WHERE token = $1 LIMIT 1", token)
+			default:
+				s.Respond(w, r, http.StatusInternalServerError, fmt.Errorf("unsupported database type: %s", dbType))
+				return
+			}
+
 			if err != nil {
 				s.Respond(w, r, http.StatusInternalServerError, err)
 				return
 			}
 			defer rows.Close()
+
 			for rows.Next() {
 				err = rows.Scan(&txtid, &webhook, &jid, &events)
 				if err != nil {
@@ -180,8 +205,8 @@ func (s *server) Connect() http.HandlerFunc {
 		// Decodes request BODY looking for events to subscribe
 		decoder := json.NewDecoder(r.Body)
 		var t connectStruct
-		err := decoder.Decode(&t)
-		if err != nil {
+
+		if err := decoder.Decode(&t); err != nil {
 			s.Respond(w, r, http.StatusBadRequest, errors.New("Could not decode Payload"))
 			return
 		}
@@ -208,7 +233,18 @@ func (s *server) Connect() http.HandlerFunc {
 				}
 			}
 			eventstring = strings.Join(subscribedEvents, ",")
-			_, err = s.db.Exec("UPDATE users SET events=? WHERE id=?", eventstring, userid)
+
+			var err error
+			switch dbType {
+			case "sqlite3":
+				_, err = s.db.Exec("UPDATE users SET events = ? WHERE id = ?", eventstring, userid)
+			case "postgresql":
+				_, err = s.db.Exec("UPDATE users SET events = $1 WHERE id = $2", eventstring, userid)
+			default:
+				s.Respond(w, r, http.StatusInternalServerError, fmt.Errorf("unsupported database type: %s", dbType))
+				return
+			}
+
 			if err != nil {
 				log.Warn().Msg("Could not set events in users table")
 			}
@@ -265,7 +301,17 @@ func (s *server) Disconnect() http.HandlerFunc {
 			if clientPointer[userid].IsLoggedIn() == true {
 				log.Info().Str("jid", jid).Msg("Disconnection successfull")
 				killchannel[userid] <- true
-				_, err := s.db.Exec("UPDATE users SET events=? WHERE id=?", "", userid)
+				var err error
+				switch dbType {
+				case "sqlite3":
+					_, err = s.db.Exec("UPDATE users SET events = ? WHERE id = ?", "", userid)
+				case "postgresql":
+					_, err = s.db.Exec("UPDATE users SET events = $1 WHERE id = $2", "", userid)
+				default:
+					s.Respond(w, r, http.StatusInternalServerError, fmt.Errorf("unsupported database type: %s", dbType))
+					return
+				}
+
 				if err != nil {
 					log.Warn().Str("userid", txtid).Msg("Could not set events in users table")
 				}
@@ -300,8 +346,20 @@ func (s *server) GetWebhook() http.HandlerFunc {
 		webhook := ""
 		events := ""
 		txtid := r.Context().Value("userinfo").(Values).Get("Id")
+		var rows *sql.Rows
+		var err error
 
-		rows, err := s.db.Query("SELECT webhook,events FROM users WHERE id=? LIMIT 1", txtid)
+		switch dbType {
+		case "sqlite3":
+			rows, err = s.db.Query("SELECT webhook, events FROM users WHERE id = ? LIMIT 1", txtid)
+		case "postgresql":
+			rows, err = s.db.Query("SELECT webhook, events FROM users WHERE id = $1 LIMIT 1", txtid)
+
+		default:
+			s.Respond(w, r, http.StatusInternalServerError, fmt.Errorf("Failed to get webhook. Unsupported database type: %s", dbType))
+			return
+		}
+
 		if err != nil {
 			s.Respond(w, r, http.StatusInternalServerError, errors.New(fmt.Sprintf("Could not get webhook: %v", err)))
 			return
@@ -346,14 +404,23 @@ func (s *server) SetWebhook() http.HandlerFunc {
 
 		decoder := json.NewDecoder(r.Body)
 		var t webhookStruct
-		err := decoder.Decode(&t)
-		if err != nil {
+		if err := decoder.Decode(&t); err != nil {
 			s.Respond(w, r, http.StatusInternalServerError, errors.New(fmt.Sprintf("Could not set webhook: %v", err)))
 			return
 		}
 		var webhook = t.WebhookURL
 
-		_, err = s.db.Exec("UPDATE users SET webhook=? WHERE id=?", webhook, userid)
+		var err error
+
+		switch dbType {
+		case "sqlite3":
+			_, err = s.db.Exec("UPDATE users SET webhook = ? WHERE id = ?", webhook, userid)
+		case "postgresql":
+			_, err = s.db.Exec("UPDATE users SET webhook = $1 WHERE id = $2", webhook, userid)
+		default:
+			s.Respond(w, r, http.StatusInternalServerError, fmt.Errorf("Failed to set webhook. Unsupported database type: %s", dbType))
+			return
+		}
 		if err != nil {
 			s.Respond(w, r, http.StatusInternalServerError, errors.New(fmt.Sprintf("%s", err)))
 			return
@@ -389,7 +456,18 @@ func (s *server) GetQR() http.HandlerFunc {
 				s.Respond(w, r, http.StatusInternalServerError, errors.New("Not connected"))
 				return
 			}
-			rows, err := s.db.Query("SELECT qrcode AS code FROM users WHERE id=? LIMIT 1", userid)
+			var rows *sql.Rows
+			var err error
+
+			switch dbType {
+			case "sqlite3":
+				rows, err = s.db.Query("SELECT qrcode AS code FROM users WHERE id = ? LIMIT 1", userid)
+			case "postgresql":
+				rows, err = s.db.Query("SELECT qrcode AS code FROM users WHERE id = $1 LIMIT 1", userid)
+			default:
+				s.Respond(w, r, http.StatusInternalServerError, fmt.Errorf("unsupported database type: %s", dbType))
+				return
+			}
 			if err != nil {
 				s.Respond(w, r, http.StatusInternalServerError, err)
 				return
@@ -2928,15 +3006,27 @@ func (s *server) AddUser() http.HandlerFunc {
 			Expiration int    `json:"expiration"`
 			Events     string `json:"events"`
 		}
-		err := json.NewDecoder(r.Body).Decode(&user)
-		if err != nil {
+
+		if err := json.NewDecoder(r.Body).Decode(&user); err != nil {
 			s.Respond(w, r, http.StatusBadRequest, errors.New("Incomplete data in Payload. Required name,token,webhook,expiration,events"))
 			return
 		}
 
 		// Check if a user with the same token already exists
+
 		var count int
-		err = s.db.QueryRow("SELECT COUNT(*) FROM users WHERE token = ?", user.Token).Scan(&count)
+		var err error
+
+		switch dbType {
+		case "sqlite3":
+			err = s.db.QueryRow("SELECT COUNT(*) FROM users WHERE token = ?", user.Token).Scan(&count)
+		case "postgresql":
+			err = s.db.QueryRow("SELECT COUNT(*) FROM users WHERE token = $1", user.Token).Scan(&count)
+		default:
+			s.Respond(w, r, http.StatusInternalServerError, fmt.Errorf("Failed to check if a user with the same token already exists. Unsupported database type: %s", dbType))
+			return
+		}
+
 		if err != nil {
 			s.Respond(w, r, http.StatusInternalServerError, errors.New("Problem accessing DB"))
 			return
@@ -2958,8 +3048,23 @@ func (s *server) AddUser() http.HandlerFunc {
 		}
 
 		// Insert the user into the database
-		result, err := s.db.Exec("INSERT INTO users (name, token, webhook, expiration, events, jid, qrcode) VALUES (?, ?, ?, ?, ?, ?, ?)",
-			user.Name, user.Token, user.Webhook, user.Expiration, user.Events, "", "")
+		var result sql.Result
+
+		switch dbType {
+		case "sqlite3":
+			result, err = s.db.Exec(
+				"INSERT INTO users (name, token, webhook, expiration, events, jid, qrcode) VALUES (?, ?, ?, ?, ?, ?, ?)",
+				user.Name, user.Token, user.Webhook, user.Expiration, user.Events, "", "")
+
+		case "postgresql":
+			result, err = s.db.Exec(
+				"INSERT INTO users (name, token, webhook, expiration, events, jid, qrcode) VALUES ($1, $2, $3, $4, $5, $6, $7)",
+				user.Name, user.Token, user.Webhook, user.Expiration, user.Events, "", "")
+		default:
+			s.Respond(w, r, http.StatusInternalServerError, fmt.Errorf("Failed to Insert the user into the database. Unsupported database type: %s", dbType))
+			return
+		}
+
 		if err != nil {
 			s.Respond(w, r, http.StatusInternalServerError, errors.New("Problem accessing DB"))
 			log.Error().Str("error", fmt.Sprintf("%v", err)).Msg("Admin DB Error")
@@ -2985,7 +3090,18 @@ func (s *server) DeleteUser() http.HandlerFunc {
 		userID := vars["id"]
 
 		// Delete the user from the database
-		result, err := s.db.Exec("DELETE FROM users WHERE id = ?", userID)
+		var result sql.Result
+		var err error
+
+		switch dbType {
+		case "sqlite3":
+			result, err = s.db.Exec("DELETE FROM users WHERE id = ?", userID)
+		case "postgresql":
+			result, err = s.db.Exec("DELETE FROM users WHERE id = $1", userID)
+		default:
+			s.Respond(w, r, http.StatusInternalServerError, fmt.Errorf("Failed to delete the user from the database. Unsupported database type: %s", dbType))
+			return
+		}
 		if err != nil {
 			s.Respond(w, r, http.StatusInternalServerError, errors.New("Problem accessing DB"))
 			return
