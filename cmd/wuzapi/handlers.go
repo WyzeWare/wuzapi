@@ -59,6 +59,12 @@ func (s *server) authalice(next http.Handler) http.Handler {
 			token = strings.Join(r.URL.Query()["token"], "")
 		}
 
+		// Validate token
+		if valid, err := IsValidToken(token); !valid {
+			s.Respond(w, r, http.StatusBadRequest, err)
+			return
+		}
+
 		myuserinfo, found := userinfocache.Get(token)
 		if !found {
 			log.Info().Msg("Looking for user information in DB")
@@ -127,6 +133,12 @@ func (s *server) auth(handler http.HandlerFunc) http.HandlerFunc {
 		token := r.Header.Get("token")
 		if token == "" {
 			token = strings.Join(r.URL.Query()["token"], "")
+		}
+
+		// Validate token
+		if valid, err := IsValidToken(token); !valid {
+			s.Respond(w, r, http.StatusBadRequest, err)
+			return
 		}
 
 		myuserinfo, found := userinfocache.Get(token)
