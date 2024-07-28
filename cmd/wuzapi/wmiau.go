@@ -611,7 +611,7 @@ func (mycli *MyClient) myEventHandler(rawEvt interface{}) {
 		postmap["type"] = "ReadReceipt"
 		dowebhook = 1
 		if evt.Type == events.ReceiptTypeRead || evt.Type == events.ReceiptTypeReadSelf {
-			log.Info().Strs("id", evt.MessageIDs).Str("source", evt.SourceString()).Str("timestamp", fmt.Sprintf("%d", evt.Timestamp)).Msg("Message was read")
+			log.Info().Strs("id", evt.MessageIDs).Str("source", evt.SourceString()).Time("timestamp", evt.Timestamp).Msg("Message was read")
 			if evt.Type == events.ReceiptTypeRead {
 				postmap["state"] = "Read"
 			} else {
@@ -619,7 +619,7 @@ func (mycli *MyClient) myEventHandler(rawEvt interface{}) {
 			}
 		} else if evt.Type == events.ReceiptTypeDelivered {
 			postmap["state"] = "Delivered"
-			log.Info().Str("id", evt.MessageIDs[0]).Str("source", evt.SourceString()).Str("timestamp", fmt.Sprintf("%d", evt.Timestamp)).Msg("Message delivered")
+			log.Info().Str("id", evt.MessageIDs[0]).Str("source", evt.SourceString()).Str("timestamp", fmt.Sprintf("%d", evt.Timestamp.Unix())).Msg("Message delivered")
 		} else {
 			// Discard webhooks for inactive or other delivery types
 			return
@@ -632,7 +632,7 @@ func (mycli *MyClient) myEventHandler(rawEvt interface{}) {
 			if evt.LastSeen.IsZero() {
 				log.Info().Str("from", evt.From.String()).Msg("User is now offline")
 			} else {
-				log.Info().Str("from", evt.From.String()).Str("lastSeen", fmt.Sprintf("%d", evt.LastSeen)).Msg("User is now offline")
+				log.Info().Str("from", evt.From.String()).Time("lastSeen", evt.LastSeen).Msg("User is now offline")
 			}
 		} else {
 			postmap["state"] = "online"
