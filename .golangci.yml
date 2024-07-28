@@ -1,0 +1,26 @@
+linters:
+  enable:
+    - errcheck
+    - gosimple
+    - staticcheck
+    - gofmt
+    - govet
+    - unused
+    - ineffassign
+    - deadcode
+    - typecheck
+    - varcheck
+    - structcheck
+    - misspell
+    - gosec
+    - dupl
+
+run:
+  timeout: 5m
+  tests: true
+
+issues:
+  exclude-rules:
+    - linters:
+        - gosec
+      text: "G104"  # Allow unsafe file path usage
