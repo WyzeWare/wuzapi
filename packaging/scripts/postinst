@@ -83,7 +83,7 @@ PRAGMA foreign_keys = ON;
 CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
-    token TEXT NOT NULL UNIQUE,
+    token TEXT NOT NULL UNIQUE CHECK(length(token) = 32 AND token GLOB '*[A-Za-z0-9]*'),
     webhook TEXT DEFAULT '',
     jid TEXT DEFAULT '',
     qrcode TEXT DEFAULT '',
@@ -276,7 +276,7 @@ configure_postgres() {
             CREATE TABLE IF NOT EXISTS wuzapi.users (
                 id SERIAL PRIMARY KEY,
                 name TEXT NOT NULL,
-                token TEXT NOT NULL UNIQUE,
+                token TEXT NOT NULL UNIQUE CHECK(length(token) = 32 AND token ~ '^[A-Za-z0-9]{32}$'),
                 webhook TEXT DEFAULT '',
                 jid TEXT DEFAULT '',
                 qrcode TEXT DEFAULT '',
