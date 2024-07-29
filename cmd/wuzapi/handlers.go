@@ -311,7 +311,7 @@ func (s *server) Disconnect() http.HandlerFunc {
 		}
 		if clientPointer[userid].IsConnected() == true {
 			if clientPointer[userid].IsLoggedIn() == true {
-				log.Info().Str("jid", jid).Msg("Disconnection successfull")
+				log.Info().Str("jid", jid).Msg("Disconnection successful")
 				killchannel[userid] <- true
 				var err error
 				switch dbType {
@@ -2164,7 +2164,7 @@ func (s *server) ChatPresence() http.HandlerFunc {
 			return
 		}
 
-		response := map[string]interface{}{"Details": "Chat presence set successfuly"}
+		response := map[string]interface{}{"Details": "Chat presence set successfully"}
 		responseJson, err := json.Marshal(response)
 		if err != nil {
 			s.Respond(w, r, http.StatusInternalServerError, err)

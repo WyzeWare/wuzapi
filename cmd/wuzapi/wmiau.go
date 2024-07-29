@@ -283,7 +283,7 @@ func (s *server) startClient(userID int, textjid string, token string, subscript
 						qrterminal.GenerateHalfBlock(evt.Code, qrterminal.L, os.Stdout)
 						fmt.Println("QR code:\n", evt.Code)
 					}
-					// Store encoded/embeded base64 QR on database for retrieval with the /qr endpoint
+					// Store encoded/embedded base64 QR on database for retrieval with the /qr endpoint
 					image, _ := qrcode.Encode(evt.Code, qrcode.Medium, 256)
 					base64qrcode := "data:image/png;base64," + base64.StdEncoding.EncodeToString(image)
 					var sqlStmt string
@@ -295,7 +295,7 @@ func (s *server) startClient(userID int, textjid string, token string, subscript
 						sqlStmt = `UPDATE users SET qrcode=$1 WHERE id=$2`
 					default:
 						log.Error().Err(err).Msg(
-							"Failed to store encoded/embeded base64 QR on database for retrieval with the /qr endpoint. Unsupported database")
+							"Failed to store encoded/embedded base64 QR on database for retrieval with the /qr endpoint. Unsupported database")
 						return
 					}
 
