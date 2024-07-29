@@ -2928,13 +2928,14 @@ func (s *server) SetGroupName() http.HandlerFunc {
 
 // Admin List users
 func (s *server) ListUsers() http.HandlerFunc {
-
-	type usersStruct struct {
-		Id        int
-		Name      string
-		Connected bool
-		Events    string
-	}
+	/*
+		type usersStruct struct {
+			Id        int
+			Name      string
+			Connected bool
+			Events    string
+		}
+	*/
 
 	return func(w http.ResponseWriter, r *http.Request) {
 
