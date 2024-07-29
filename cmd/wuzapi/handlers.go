@@ -3081,7 +3081,12 @@ func (s *server) AddUser() http.HandlerFunc {
 		response := map[string]interface{}{
 			"id": id,
 		}
-		json.NewEncoder(w).Encode(response)
+		if err := json.NewEncoder(w).Encode(response); err != nil {
+			// Handle the error appropriately
+			log.Printf("Error encoding JSON response: %v", err)
+			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+			return
+		}
 	}
 }
 
