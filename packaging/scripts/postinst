@@ -67,7 +67,11 @@ choose_database() {
 
 configure_sqlite() {
     log "Configuring SQLite3..."
-
+    
+    # Prompt user if they want multiple organizations
+    if prompt_yes_no "Do you want to configure multiple organizations?"; then
+        log "Note: SQLite does not support multiple organizations. Proceeding with single-organization setup."
+    fi
     sudo mkdir -p "$(dirname "$SQLITE_APP_DB_PATH")" || { log "Failed to create directory for SQLite database"; exit 1; }
     sudo chown -R $USER:$USER "$(dirname "$SQLITE_APP_DB_PATH")" || { log "Failed to change ownership of SQLite database directory"; exit 1; }
     sudo chmod 755 "$(dirname "$SQLITE_APP_DB_PATH")" || { log "Failed to set permissions for SQLite database directory"; exit 1; }
@@ -271,7 +275,15 @@ configure_postgres() {
 
         log "Creating users table in wuzapi_app..."
         if pg_execute_db "wuzapi_app" "
-            
+
+            -- Organizations Table
+            CREATE TABLE IF NOT EXISTS wuzapi.organizations (
+                id SERIAL PRIMARY KEY,
+                name TEXT NOT NULL UNIQUE,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+
+            -- Users Table   
             CREATE TABLE IF NOT EXISTS wuzapi.users (
                 id SERIAL PRIMARY KEY,
                 name TEXT NOT NULL,
@@ -282,12 +294,88 @@ configure_postgres() {
                 connected INTEGER,
                 expiration INTEGER,
                 events TEXT DEFAULT 'All'
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
             );
 
+            -- Add columns to users table
+            ALTER TABLE wuzapi.users ADD COLUMN is_super_admin BOOLEAN DEFAULT FALSE;
+            ALTER TABLE wuzapi.users ADD COLUMN is_admin BOOLEAN DEFAULT FALSE;
+
+            -- Junction table for user-organization relationships
+            CREATE TABLE IF NOT EXISTS wuzapi.user_organizations (
+                user_id INTEGER NOT NULL,
+                organization_id INTEGER NOT NULL,
+                PRIMARY KEY (user_id, organization_id),
+                FOREIGN KEY (user_id) REFERENCES wuzapi.users(id) ON DELETE CASCADE,
+                FOREIGN KEY (organization_id) REFERENCES wuzapi.organizations(id) ON DELETE RESTRICT,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+            );
+
+            -- Function to ensure user belongs to at least one organization
+            CREATE OR REPLACE FUNCTION wuzapi.ensure_user_in_organization() RETURNS TRIGGER AS $$
+            BEGIN
+                IF NOT EXISTS (SELECT 1 FROM wuzapi.user_organizations WHERE user_id = OLD.user_id) THEN
+                    RAISE EXCEPTION 'User must belong to at least one organization';
+                END IF;
+                RETURN OLD;
+            END;
+            $$ LANGUAGE plpgsql;
+
+            -- Trigger to prevent removing a user's last organization
+            CREATE TRIGGER prevent_remove_last_organization
+            AFTER DELETE ON wuzapi.user_organizations
+            FOR EACH ROW EXECUTE FUNCTION wuzapi.ensure_user_in_organization();
+
+            -- Create table to track organization admins
+            CREATE TABLE IF NOT EXISTS wuzapi.organization_admins (
+                user_id INTEGER NOT NULL,
+                organization_id INTEGER NOT NULL,
+                PRIMARY KEY (user_id, organization_id),
+                FOREIGN KEY (user_id) REFERENCES wuzapi.users(id) ON DELETE CASCADE,
+                FOREIGN KEY (organization_id) REFERENCES wuzapi.organizations(id) ON DELETE CASCADE,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+            );
+
+            -- Function to ensure at least one super admin exists
+            CREATE OR REPLACE FUNCTION wuzapi.ensure_super_admin_exists() RETURNS TRIGGER AS $$
+            BEGIN
+                IF NOT EXISTS (SELECT 1 FROM wuzapi.users WHERE is_super_admin = TRUE) THEN
+                    RAISE EXCEPTION 'At least one super admin must exist';
+                END IF;
+                RETURN OLD;
+            END;
+            $$ LANGUAGE plpgsql;
+
+            -- Trigger to prevent deleting last super admin
+            CREATE TRIGGER prevent_delete_last_super_admin
+            AFTER DELETE OR UPDATE ON wuzapi.users
+            FOR EACH ROW EXECUTE FUNCTION wuzapi.ensure_super_admin_exists();
+
+            -- Function to ensure each organization has at least one admin
+            CREATE OR REPLACE FUNCTION wuzapi.ensure_org_has_admin() RETURNS TRIGGER AS $$
+            BEGIN
+                IF NOT EXISTS (SELECT 1 FROM wuzapi.organization_admins WHERE organization_id = OLD.organization_id) THEN
+                    RAISE EXCEPTION 'Each organization must have at least one admin';
+                END IF;
+                RETURN OLD;
+            END;
+            $$ LANGUAGE plpgsql;
+
+            -- Trigger to prevent deleting last admin of an organization
+            CREATE TRIGGER prevent_delete_last_org_admin
+            AFTER DELETE ON wuzapi.organization_admins
+            FOR EACH ROW EXECUTE FUNCTION wuzapi.ensure_org_has_admin();
+    
+            -- Indexes for Performance
             CREATE INDEX IF NOT EXISTS idx_users_token ON wuzapi.users(token);
+            CREATE INDEX IF NOT EXISTS idx_user_organizations_user ON wuzapi.user_organizations(user_id);
+            CREATE INDEX IF NOT EXISTS idx_user_organizations_org ON wuzapi.user_organizations(organization_id);
+            CREATE INDEX IF NOT EXISTS idx_users_super_admin ON wuzapi.users(is_super_admin);
+            CREATE INDEX IF NOT EXISTS idx_users_admin ON wuzapi.users(is_admin);       
 
             ALTER DEFAULT PRIVILEGES IN SCHEMA wuzapi GRANT ALL PRIVILEGES ON TABLES TO wuzapi;
             ALTER DEFAULT PRIVILEGES IN SCHEMA wuzapi GRANT ALL PRIVILEGES ON SEQUENCES TO wuzapi;
+
         "; then
             log "PostgreSQL table created successfully with unique token"
         else
