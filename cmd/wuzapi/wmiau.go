@@ -246,7 +246,9 @@ func (s *server) startClient(userID int, textjid string, token string, subscript
 	clientHttp[userID].SetTimeout(5 * time.Second)
 
 	// Configure TLS settings
-	tlsConfig := &tls.Config{}
+	tlsConfig := &tls.Config{
+		MinVersion: tls.VersionTLS13, // Use TLS 1.3 for the highest security
+	}
 	clientHttp[userID].SetTLSClientConfig(tlsConfig)
 
 	// Set error handling for the HTTP client
