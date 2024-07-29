@@ -233,20 +233,32 @@ func (s *server) startClient(userID int, textjid string, token string, subscript
 	mycli := MyClient{client, 1, userID, token, subscriptions, s.db}
 	mycli.eventHandlerID = mycli.WAClient.AddEventHandler(mycli.myEventHandler)
 
-	//clientHttp[userID] = resty.New().EnableTrace()
+	// Initialize the HTTP client
 	clientHttp[userID] = resty.New()
 	clientHttp[userID].SetRedirectPolicy(resty.FlexibleRedirectPolicy(15))
+
+	// Enable debug logging if waDebug is set to "DEBUG"
 	if *waDebug == "DEBUG" {
 		clientHttp[userID].SetDebug(true)
 	}
+
+	// Set a timeout for requests
 	clientHttp[userID].SetTimeout(5 * time.Second)
-	clientHttp[userID].SetTLSClientConfig(&tls.Config{InsecureSkipVerify: true})
+
+	// Configure TLS settings
+	tlsConfig := &tls.Config{}
+	clientHttp[userID].SetTLSClientConfig(tlsConfig)
+
+	// Set error handling for the HTTP client
 	clientHttp[userID].OnError(func(req *resty.Request, err error) {
 		if v, ok := err.(*resty.ResponseError); ok {
 			// v.Response contains the last response from the server
 			// v.Err contains the original error
 			log.Debug().Str("response", v.Response.String()).Msg("resty error")
 			log.Error().Err(v.Err).Msg("resty error")
+		} else {
+			// Log other types of errors
+			log.Error().Err(err).Msg("resty error")
 		}
 	})
 
