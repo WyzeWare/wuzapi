@@ -187,9 +187,14 @@ func main() {
 
 	if *sslcert != "" && *sslprivkey != "" {
 		srv = &http.Server{
-			Addr:    *address + ":" + *port,
-			Handler: s.router,
+			Addr:              *address + ":" + *port,
+			Handler:           s.router,
+			ReadHeaderTimeout: 20 * time.Second,
+			ReadTimeout:       60 * time.Second,
+			WriteTimeout:      120 * time.Second,
+			IdleTimeout:       180 * time.Second,
 		}
+
 		go func() {
 			if err := srv.ListenAndServeTLS(*sslcert, *sslprivkey); err != nil && err != http.ErrServerClosed {
 				log.Fatal().Err(err).Msg("Server startup failed")
