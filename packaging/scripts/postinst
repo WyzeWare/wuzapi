@@ -264,14 +264,13 @@ configure_postgres() {
         log "Creating schema and granting privileges for wuzapi_app..."
         pg_execute_db "wuzapi_app" "
             CREATE SCHEMA IF NOT EXISTS wuzapi;
-            GRANT USAGE ON SCHEMA wuzapi TO wuzapi;
+            GRANT ALL PRIVILEGES ON SCHEMA wuzapi TO wuzapi;
             GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA wuzapi TO wuzapi;
             GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA wuzapi TO wuzapi;
         "
 
         log "Creating users table in wuzapi_app..."
         if pg_execute_db "wuzapi_app" "
-            CREATE SCHEMA IF NOT EXISTS wuzapi;
             
             CREATE TABLE IF NOT EXISTS wuzapi.users (
                 id SERIAL PRIMARY KEY,
@@ -287,9 +286,8 @@ configure_postgres() {
 
             CREATE INDEX IF NOT EXISTS idx_users_token ON wuzapi.users(token);
 
-            GRANT ALL PRIVILEGES ON SCHEMA wuzapi TO wuzapi;
-            GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA wuzapi TO wuzapi;
-            GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA wuzapi TO wuzapi;
+            ALTER DEFAULT PRIVILEGES IN SCHEMA wuzapi GRANT ALL PRIVILEGES ON TABLES TO wuzapi;
+            ALTER DEFAULT PRIVILEGES IN SCHEMA wuzapi GRANT ALL PRIVILEGES ON SEQUENCES TO wuzapi;
         "; then
             log "PostgreSQL table created successfully with unique token"
         else
