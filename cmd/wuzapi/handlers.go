@@ -119,6 +119,7 @@ func (s *server) authalice(next http.Handler) http.Handler {
 }
 
 // Middleware: Authenticate connections based on Token header/uri parameter
+/* Currently not used anywhere code
 func (s *server) auth(handler http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 
@@ -194,7 +195,7 @@ func (s *server) auth(handler http.HandlerFunc) http.HandlerFunc {
 		handler(w, r.WithContext(ctx))
 	}
 }
-
+*/
 // Connects to Whatsapp Servers
 func (s *server) Connect() http.HandlerFunc {
 
