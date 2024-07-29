@@ -311,8 +311,8 @@ func (s *server) Disconnect() http.HandlerFunc {
 			s.Respond(w, r, http.StatusInternalServerError, errors.New("No session"))
 			return
 		}
-		if clientPointer[userid].IsConnected() == true {
-			if clientPointer[userid].IsLoggedIn() == true {
+		if clientPointer[userid].IsConnected() {
+			if clientPointer[userid].IsLoggedIn() {
 				log.Info().Str("jid", jid).Msg("Disconnection successful")
 				killchannel[userid] <- true
 				var err error
@@ -466,7 +466,7 @@ func (s *server) GetQR() http.HandlerFunc {
 			s.Respond(w, r, http.StatusInternalServerError, errors.New("No session"))
 			return
 		} else {
-			if clientPointer[userid].IsConnected() == false {
+			if !clientPointer[userid].IsConnected() {
 				s.Respond(w, r, http.StatusInternalServerError, errors.New("Not connected"))
 				return
 			}
@@ -499,7 +499,7 @@ func (s *server) GetQR() http.HandlerFunc {
 				s.Respond(w, r, http.StatusInternalServerError, err)
 				return
 			}
-			if clientPointer[userid].IsLoggedIn() == true {
+			if clientPointer[userid].IsLoggedIn() {
 				s.Respond(w, r, http.StatusInternalServerError, errors.New("Already Loggedin"))
 				return
 			}
@@ -529,7 +529,7 @@ func (s *server) Logout() http.HandlerFunc {
 			s.Respond(w, r, http.StatusInternalServerError, errors.New("No session"))
 			return
 		} else {
-			if clientPointer[userid].IsLoggedIn() == true && clientPointer[userid].IsConnected() == true {
+			if clientPointer[userid].IsLoggedIn() && clientPointer[userid].IsConnected() {
 				err := clientPointer[userid].Logout()
 				if err != nil {
 					log.Error().Str("jid", jid).Msg("Could not perform logout")
@@ -540,7 +540,7 @@ func (s *server) Logout() http.HandlerFunc {
 					killchannel[userid] <- true
 				}
 			} else {
-				if clientPointer[userid].IsConnected() == true {
+				if clientPointer[userid].IsConnected() {
 					log.Warn().Str("jid", jid).Msg("Ignoring logout as it was not logged in")
 					s.Respond(w, r, http.StatusInternalServerError, errors.New("Could not disconnect as it was not logged in"))
 					return
