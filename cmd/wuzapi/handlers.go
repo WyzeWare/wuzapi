@@ -401,7 +401,7 @@ func (s *server) GetWebhook() http.HandlerFunc {
 		} else {
 			s.Respond(w, r, http.StatusOK, string(responseJson))
 		}
-		return
+
 	}
 }
 
@@ -450,7 +450,7 @@ func (s *server) SetWebhook() http.HandlerFunc {
 		} else {
 			s.Respond(w, r, http.StatusOK, string(responseJson))
 		}
-		return
+
 	}
 }
 
@@ -513,7 +513,7 @@ func (s *server) GetQR() http.HandlerFunc {
 		} else {
 			s.Respond(w, r, http.StatusOK, string(responseJson))
 		}
-		return
+
 	}
 }
 
