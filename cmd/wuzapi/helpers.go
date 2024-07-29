@@ -53,11 +53,25 @@ func callHook(myurl string, payload map[string]string, id int) {
 }
 
 // webhook for messages with file attachments
-func callHookFile(myurl string, payload map[string]string, id int, file string) {
+func callHookFile(myurl string, payload map[string]string, id int, file string) error {
 	log.Info().Str("file", file).Str("url", myurl).Msg("Sending POST")
-	clientHttp[id].R().SetFiles(map[string]string{
-		"file": file,
-	}).SetFormData(payload).Post(myurl)
+
+	resp, err := clientHttp[id].R().
+		SetFiles(map[string]string{
+			"file": file,
+		}).
+		SetFormData(payload).
+		Post(myurl)
+
+	if err != nil {
+		log.Error().Err(err).Str("url", myurl).Msg("Failed to send POST request")
+		return fmt.Errorf("failed to send POST request: %w", err)
+	}
+
+	// Optionally, you can log the response status
+	log.Info().Int("status", resp.StatusCode()).Msg("POST request completed")
+
+	return nil
 }
 
 // IsValidToken checks if the given token is exactly 32 alphanumeric characters
