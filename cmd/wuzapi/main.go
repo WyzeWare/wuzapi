@@ -185,28 +185,26 @@ func main() {
 
 	var srv *http.Server
 
-	if *sslcert != "" && *sslprivkey != "" {
-		srv = &http.Server{
-			Addr:              *address + ":" + *port,
-			Handler:           s.router,
-			ReadHeaderTimeout: 20 * time.Second,
-			ReadTimeout:       60 * time.Second,
-			WriteTimeout:      120 * time.Second,
-			IdleTimeout:       180 * time.Second,
-		}
+	timeoutConfig := &http.Server{
+		Addr:              *address + ":" + *port,
+		Handler:           s.router,
+		ReadHeaderTimeout: 20 * time.Second,
+		ReadTimeout:       60 * time.Second,
+		WriteTimeout:      120 * time.Second,
+		IdleTimeout:       180 * time.Second,
+	}
 
+	if *sslcert != "" && *sslprivkey != "" {
+		// TLS server
 		go func() {
-			if err := srv.ListenAndServeTLS(*sslcert, *sslprivkey); err != nil && err != http.ErrServerClosed {
+			if err := timeoutConfig.ListenAndServeTLS(*sslcert, *sslprivkey); err != nil && err != http.ErrServerClosed {
 				log.Fatal().Err(err).Msg("Server startup failed")
 			}
 		}()
 	} else {
-		srv = &http.Server{
-			Addr:    *address + ":" + *port,
-			Handler: s.router,
-		}
+		// Non-TLS server
 		go func() {
-			if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			if err := timeoutConfig.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 				log.Fatal().Err(err).Msg("Server startup failed")
 			}
 		}()
