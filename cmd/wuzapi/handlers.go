@@ -269,9 +269,9 @@ func (s *server) Connect() http.HandlerFunc {
 			killchannel[userid] = make(chan bool)
 			go s.startClient(userid, jid, token, subscribedEvents, t.OSName, t.PlatformType)
 
-			if t.Immediate == false {
+			if !t.Immediate {
 				log.Warn().Msg("Waiting 10 seconds")
-				time.Sleep(10000 * time.Millisecond)
+				time.Sleep(10 * time.Second) // Sleep for 10 seconds
 
 				if clientPointer[userid] != nil {
 					if !clientPointer[userid].IsConnected() {
@@ -283,6 +283,7 @@ func (s *server) Connect() http.HandlerFunc {
 					return
 				}
 			}
+
 		}
 
 		response := map[string]interface{}{"webhook": webhook, "jid": jid, "events": eventstring, "details": "Connected!"}
