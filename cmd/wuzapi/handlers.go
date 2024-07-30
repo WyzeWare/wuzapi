@@ -2109,7 +2109,7 @@ func (s *server) GetContacts() http.HandlerFunc {
 			return
 		}
 
-		result := map[types.JID]types.ContactInfo{}
+		// result := map[types.JID]types.ContactInfo{}
 		result, err := clientPointer[userid].Store.Contacts.GetAllContacts()
 		if err != nil {
 			s.Respond(w, r, http.StatusInternalServerError, err)
