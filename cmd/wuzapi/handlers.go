@@ -419,7 +419,7 @@ func (s *server) SetWebhook() http.HandlerFunc {
 		decoder := json.NewDecoder(r.Body)
 		var t webhookStruct
 		if err := decoder.Decode(&t); err != nil {
-			s.Respond(w, r, http.StatusInternalServerError, errors.New(fmt.Sprintf("could not set webhook: %v", err)))
+			s.Respond(w, r, http.StatusInternalServerError, fmt.Errorf("could not set webhook: %s", err))
 			return
 		}
 		var webhook = t.WebhookURL
@@ -436,7 +436,8 @@ func (s *server) SetWebhook() http.HandlerFunc {
 			return
 		}
 		if err != nil {
-			s.Respond(w, r, http.StatusInternalServerError, errors.New(fmt.Sprintf("%s", err)))
+			s.Respond(w, r, http.StatusInternalServerError, fmt.Errorf("%s", err))
+
 			return
 		}
 
@@ -714,7 +715,7 @@ func (s *server) SendDocument() http.HandlerFunc {
 				filedata = dataURL.Data
 				uploaded, err = clientPointer[userid].Upload(context.Background(), filedata, whatsmeow.MediaDocument)
 				if err != nil {
-					s.Respond(w, r, http.StatusInternalServerError, errors.New(fmt.Sprintf("failed to upload file: %v", err)))
+					s.Respond(w, r, http.StatusInternalServerError, fmt.Errorf("failed to upload file:%s", err))
 					return
 				}
 			}
@@ -826,7 +827,7 @@ func (s *server) SendAudio() http.HandlerFunc {
 				filedata = dataURL.Data
 				uploaded, err = clientPointer[userid].Upload(context.Background(), filedata, whatsmeow.MediaAudio)
 				if err != nil {
-					s.Respond(w, r, http.StatusInternalServerError, errors.New(fmt.Sprintf("failed to upload file: %v", err)))
+					s.Respond(w, r, http.StatusInternalServerError, fmt.Errorf("failed to upload file %s", err))
 					return
 				}
 			}
@@ -940,7 +941,7 @@ func (s *server) SendImage() http.HandlerFunc {
 				filedata = dataURL.Data
 				uploaded, err = clientPointer[userid].Upload(context.Background(), filedata, whatsmeow.MediaImage)
 				if err != nil {
-					s.Respond(w, r, http.StatusInternalServerError, errors.New(fmt.Sprintf("failed to upload file: %v", err)))
+					s.Respond(w, r, http.StatusInternalServerError, fmt.Errorf("failed to upload file %s", err))
 					return
 				}
 			}
@@ -1051,7 +1052,7 @@ func (s *server) SendSticker() http.HandlerFunc {
 				filedata = dataURL.Data
 				uploaded, err = clientPointer[userid].Upload(context.Background(), filedata, whatsmeow.MediaImage)
 				if err != nil {
-					s.Respond(w, r, http.StatusInternalServerError, errors.New(fmt.Sprintf("failed to upload file: %v", err)))
+					s.Respond(w, r, http.StatusInternalServerError, fmt.Errorf("failed to upload file %s", err))
 					return
 				}
 			}
@@ -1162,7 +1163,7 @@ func (s *server) SendVideo() http.HandlerFunc {
 				filedata = dataURL.Data
 				uploaded, err = clientPointer[userid].Upload(context.Background(), filedata, whatsmeow.MediaVideo)
 				if err != nil {
-					s.Respond(w, r, http.StatusInternalServerError, errors.New(fmt.Sprintf("failed to upload file: %v", err)))
+					s.Respond(w, r, http.StatusInternalServerError, fmt.Errorf("failed to upload file %s", err))
 					return
 				}
 			}
@@ -1913,7 +1914,7 @@ func (s *server) CheckUser() http.HandlerFunc {
 
 		resp, err := clientPointer[userid].IsOnWhatsApp(t.Phone)
 		if err != nil {
-			s.Respond(w, r, http.StatusInternalServerError, errors.New(fmt.Sprintf("failed to check if users are on WhatsApp: %s", err)))
+			s.Respond(w, r, http.StatusInternalServerError, fmt.Errorf("failed to check if users are on WhatsApp: %s", err))
 			return
 		}
 
