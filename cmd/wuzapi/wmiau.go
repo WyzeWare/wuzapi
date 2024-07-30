@@ -713,7 +713,12 @@ func (mycli *MyClient) myEventHandler(rawEvt interface{}) {
 	case *events.ChatPresence:
 		postmap["type"] = "ChatPresence"
 		dowebhook = 1
-		log.Info().Str("state", fmt.Sprintf("%s", evt.State)).Str("media", fmt.Sprintf("%s", evt.Media)).Str("chat", evt.MessageSource.Chat.String()).Str("sender", evt.MessageSource.Sender.String()).Msg("Chat Presence received")
+		log.Info().
+			Str("state", fmt.Sprintf("%v", evt.State)).
+			Str("media", fmt.Sprintf("%v", evt.Media)).
+			Str("chat", evt.MessageSource.Chat.String()).
+			Str("sender", evt.MessageSource.Sender.String()).
+			Msg("Chat Presence received")
 	case *events.CallOffer:
 		log.Info().Str("event", fmt.Sprintf("%+v", evt)).Msg("Got call offer")
 	case *events.CallAccept:
