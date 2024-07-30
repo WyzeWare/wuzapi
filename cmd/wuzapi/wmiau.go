@@ -499,7 +499,7 @@ func (mycli *MyClient) myEventHandler(rawEvt interface{}) {
 		} else {
 			txtid := myuserinfo.(Values).Get("Id")
 			token := myuserinfo.(Values).Get("Token")
-			v := updateUserInfo(myuserinfo, "Jid", fmt.Sprintf("%s", jid))
+			v := updateUserInfo(myuserinfo, "Jid", jid.String()) // Use String() method for conversion
 			userinfocache.Set(token, v, cache.NoExpiration)
 			log.Info().Str("jid", jid.String()).Str("userid", txtid).Str("token", token).Msg("User information set")
 		}

@@ -506,7 +506,7 @@ func (s *server) GetQR() http.HandlerFunc {
 		}
 
 		log.Info().Str("userid", txtid).Str("qrcode", code).Msg("Get QR successful")
-		response := map[string]interface{}{"QRCode": fmt.Sprintf("%s", code)}
+		response := map[string]interface{}{"QRCode": code}
 		responseJson, err := json.Marshal(response)
 		if err != nil {
 			s.Respond(w, r, http.StatusInternalServerError, err)
@@ -595,7 +595,7 @@ func (s *server) PairPhone() http.HandlerFunc {
 
 		isLoggedIn := clientPointer[userid].IsLoggedIn()
 		if isLoggedIn {
-			log.Error().Msg(fmt.Sprintf("%s", "Already paired"))
+			log.Error().Msg("Already paired")
 			s.Respond(w, r, http.StatusBadRequest, errors.New("Already paired"))
 			return
 		}
@@ -1933,10 +1933,20 @@ func (s *server) CheckUser() http.HandlerFunc {
 		uc := new(UserCollection)
 		for _, item := range resp {
 			if item.VerifiedName != nil {
-				var msg = User{Query: item.Query, IsInWhatsapp: item.IsIn, JID: fmt.Sprintf("%s", item.JID), VerifiedName: item.VerifiedName.Details.GetVerifiedName()}
+				var msg = User{
+					Query:        item.Query,
+					IsInWhatsapp: item.IsIn,
+					JID:          item.JID.String(), // Use String() method for conversion
+					VerifiedName: item.VerifiedName.Details.GetVerifiedName(),
+				}
 				uc.Users = append(uc.Users, msg)
 			} else {
-				var msg = User{Query: item.Query, IsInWhatsapp: item.IsIn, JID: fmt.Sprintf("%s", item.JID), VerifiedName: ""}
+				var msg = User{
+					Query:        item.Query,
+					IsInWhatsapp: item.IsIn,
+					JID:          item.JID.String(), // Use String() method for conversion
+					VerifiedName: "",
+				}
 				uc.Users = append(uc.Users, msg)
 			}
 		}
