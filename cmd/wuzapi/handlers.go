@@ -53,6 +53,11 @@ func (s *server) authalice(next http.Handler) http.Handler {
 		jid := ""
 		events := ""
 
+		// Define a custom type for the context key
+		type contextKey string
+
+		const userinfoKey contextKey = "userinfo"
+
 		// Get token from headers or uri parameters
 		token := r.Header.Get("token")
 		if token == "" {
@@ -103,10 +108,10 @@ func (s *server) authalice(next http.Handler) http.Handler {
 				}}
 
 				userinfocache.Set(token, v, cache.NoExpiration)
-				ctx = context.WithValue(r.Context(), "userinfo", v)
+				ctx = context.WithValue(r.Context(), userinfoKey, v)
 			}
 		} else {
-			ctx = context.WithValue(r.Context(), "userinfo", myuserinfo)
+			ctx = context.WithValue(r.Context(), userinfoKey, myuserinfo)
 			userid, _ = strconv.Atoi(myuserinfo.(Values).Get("Id"))
 		}
 
@@ -1483,7 +1488,6 @@ func (s *server) SendButtons() http.HandlerFunc {
 		} else {
 			s.Respond(w, r, http.StatusOK, string(responseJson))
 		}
-		return
 	}
 }
 
