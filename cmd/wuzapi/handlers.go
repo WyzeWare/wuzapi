@@ -375,7 +375,7 @@ func (s *server) GetWebhook() http.HandlerFunc {
 		}
 
 		if err != nil {
-			s.Respond(w, r, http.StatusInternalServerError, errors.New(fmt.Sprintf("Could not get webhook: %v", err)))
+			s.Respond(w, r, http.StatusInternalServerError, fmt.Errorf("could not get webhook: %v", err))
 			return
 		}
 		defer rows.Close()
