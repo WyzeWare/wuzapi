@@ -78,11 +78,11 @@ func callHookFile(myurl string, payload map[string]string, id int, file string) 
 // It returns a boolean indicating validity and an error with a specific message if invalid
 func IsValidToken(token string) (bool, error) {
 	if len(token) != 32 {
-		return false, fmt.Errorf("Invalid token length: expected 32 characters, got %d", len(token))
+		return false, fmt.Errorf("invalid token length: expected 32 characters, got %d", len(token))
 	}
 
 	if !regexp.MustCompile("^[a-zA-Z0-9]*$").MatchString(token) {
-		return false, fmt.Errorf("Invalid token format: contains non-alphanumeric characters")
+		return false, fmt.Errorf("invalid token format: contains non-alphanumeric characters")
 	}
 
 	return true, nil
