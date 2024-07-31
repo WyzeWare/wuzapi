@@ -144,7 +144,7 @@ func (s *server) startClient(userID int, textjid string, token string, subscript
 
 	if clientPointer[userID] != nil {
 		isConnected := clientPointer[userID].IsConnected()
-		if isConnected == true {
+		if isConnected {
 			return
 		}
 	}
@@ -233,20 +233,34 @@ func (s *server) startClient(userID int, textjid string, token string, subscript
 	mycli := MyClient{client, 1, userID, token, subscriptions, s.db}
 	mycli.eventHandlerID = mycli.WAClient.AddEventHandler(mycli.myEventHandler)
 
-	//clientHttp[userID] = resty.New().EnableTrace()
+	// Initialize the HTTP client
 	clientHttp[userID] = resty.New()
 	clientHttp[userID].SetRedirectPolicy(resty.FlexibleRedirectPolicy(15))
+
+	// Enable debug logging if waDebug is set to "DEBUG"
 	if *waDebug == "DEBUG" {
 		clientHttp[userID].SetDebug(true)
 	}
+
+	// Set a timeout for requests
 	clientHttp[userID].SetTimeout(5 * time.Second)
-	clientHttp[userID].SetTLSClientConfig(&tls.Config{InsecureSkipVerify: true})
+
+	// Configure TLS settings
+	tlsConfig := &tls.Config{
+		MinVersion: tls.VersionTLS13, // Use TLS 1.3 for the highest security
+	}
+	clientHttp[userID].SetTLSClientConfig(tlsConfig)
+
+	// Set error handling for the HTTP client
 	clientHttp[userID].OnError(func(req *resty.Request, err error) {
 		if v, ok := err.(*resty.ResponseError); ok {
 			// v.Response contains the last response from the server
 			// v.Err contains the original error
 			log.Debug().Str("response", v.Response.String()).Msg("resty error")
 			log.Error().Err(v.Err).Msg("resty error")
+		} else {
+			// Log other types of errors
+			log.Error().Err(err).Msg("resty error")
 		}
 	})
 
@@ -271,7 +285,7 @@ func (s *server) startClient(userID int, textjid string, token string, subscript
 						qrterminal.GenerateHalfBlock(evt.Code, qrterminal.L, os.Stdout)
 						fmt.Println("QR code:\n", evt.Code)
 					}
-					// Store encoded/embeded base64 QR on database for retrieval with the /qr endpoint
+					// Store encoded/embedded base64 QR on database for retrieval with the /qr endpoint
 					image, _ := qrcode.Encode(evt.Code, qrcode.Medium, 256)
 					base64qrcode := "data:image/png;base64," + base64.StdEncoding.EncodeToString(image)
 					var sqlStmt string
@@ -283,7 +297,7 @@ func (s *server) startClient(userID int, textjid string, token string, subscript
 						sqlStmt = `UPDATE users SET qrcode=$1 WHERE id=$2`
 					default:
 						log.Error().Err(err).Msg(
-							"Failed to store encoded/embeded base64 QR on database for retrieval with the /qr endpoint. Unsupported database")
+							"Failed to store encoded/embedded base64 QR on database for retrieval with the /qr endpoint. Unsupported database")
 						return
 					}
 
@@ -393,6 +407,30 @@ func (s *server) startClient(userID int, textjid string, token string, subscript
 	}
 }
 
+// Add this helper function
+func downloadAndSaveMedia(mycli *MyClient, evt *events.Message, mediaType string, getData func() ([]byte, error), getMimeType func() string, exPath string) (string, error) {
+	txtid := strconv.Itoa(mycli.userID)
+	userDirectory := filepath.Join(exPath, "files", "user_"+txtid)
+
+	if err := os.MkdirAll(userDirectory, 0751); err != nil {
+		return "", fmt.Errorf("could not create user directory: %w", err)
+	}
+
+	data, err := getData()
+	if err != nil {
+		return "", fmt.Errorf("failed to download %s: %w", mediaType, err)
+	}
+
+	exts, _ := mime.ExtensionsByType(getMimeType())
+	path := filepath.Join(userDirectory, evt.Info.ID+exts[0])
+
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		return "", fmt.Errorf("failed to save %s: %w", mediaType, err)
+	}
+
+	return path, nil
+}
+
 func (mycli *MyClient) myEventHandler(rawEvt interface{}) {
 	txtid := strconv.Itoa(mycli.userID)
 	postmap := make(map[string]interface{})
@@ -485,7 +523,7 @@ func (mycli *MyClient) myEventHandler(rawEvt interface{}) {
 		} else {
 			txtid := myuserinfo.(Values).Get("Id")
 			token := myuserinfo.(Values).Get("Token")
-			v := updateUserInfo(myuserinfo, "Jid", fmt.Sprintf("%s", jid))
+			v := updateUserInfo(myuserinfo, "Jid", jid.String()) // Use String() method for conversion
 			userinfocache.Set(token, v, cache.NoExpiration)
 			log.Info().Str("jid", jid.String()).Str("userid", txtid).Str("token", token).Msg("User information set")
 		}
@@ -511,113 +549,52 @@ func (mycli *MyClient) myEventHandler(rawEvt interface{}) {
 
 		log.Info().Str("id", evt.Info.ID).Str("source", evt.Info.SourceString()).Str("parts", strings.Join(metaParts, ", ")).Msg("Message Received")
 
-		// try to get Image if any
-		img := evt.Message.GetImageMessage()
-		if img != nil {
-
-			// check/creates user directory for files
-			userDirectory := filepath.Join(exPath, "files", "user_"+txtid)
-			_, err := os.Stat(userDirectory)
-			if os.IsNotExist(err) {
-				errDir := os.MkdirAll(userDirectory, 0751)
-				if errDir != nil {
-					log.Error().Err(errDir).Msg("Could not create user directory")
-					return
-				}
-			}
-
-			data, err := mycli.WAClient.Download(img)
+		if img := evt.Message.GetImageMessage(); img != nil {
+			path, err := downloadAndSaveMedia(mycli, evt, "image",
+				func() ([]byte, error) { return mycli.WAClient.Download(img) },
+				img.GetMimetype,
+				exPath)
 			if err != nil {
-				log.Error().Err(err).Msg("Failed to download image")
-				return
-			}
-			exts, _ := mime.ExtensionsByType(img.GetMimetype())
-			path = filepath.Join(userDirectory, evt.Info.ID+exts[0])
-			err = os.WriteFile(path, data, 0600)
-			if err != nil {
-				log.Error().Err(err).Msg("Failed to save image")
-				return
-			}
-			log.Info().Str("path", path).Msg("Image saved")
-		}
-
-		// try to get Audio if any
-		audio := evt.Message.GetAudioMessage()
-		if audio != nil {
-
-			// check/creates user directory for files
-			userDirectory := filepath.Join(exPath, "files", "user_"+txtid)
-			_, err := os.Stat(userDirectory)
-			if os.IsNotExist(err) {
-				errDir := os.MkdirAll(userDirectory, 0751)
-				if errDir != nil {
-					log.Error().Err(errDir).Msg("Could not create user directory")
-					return
-				}
-			}
-
-			data, err := mycli.WAClient.Download(audio)
-			if err != nil {
-				log.Error().Err(err).Msg("Failed to download audio")
-				return
-			}
-			exts, _ := mime.ExtensionsByType(audio.GetMimetype())
-			path = filepath.Join(userDirectory, evt.Info.ID+exts[0])
-			err = os.WriteFile(path, data, 0600)
-			if err != nil {
-				log.Error().Err(err).Msg("Failed to save audio")
-				return
-			}
-			log.Info().Str("path", path).Msg("Audio saved")
-		}
-
-		// try to get Document if any
-		document := evt.Message.GetDocumentMessage()
-		if document != nil {
-
-			// check/creates user directory for files
-			userDirectory := filepath.Join(exPath, "files", "user_"+txtid)
-			_, err := os.Stat(userDirectory)
-			if os.IsNotExist(err) {
-				errDir := os.MkdirAll(userDirectory, 0751)
-				if errDir != nil {
-					log.Error().Err(errDir).Msg("Could not create user directory")
-					return
-				}
-			}
-
-			data, err := mycli.WAClient.Download(document)
-			if err != nil {
-				log.Error().Err(err).Msg("Failed to download document")
-				return
-			}
-			extension := ""
-			exts, err := mime.ExtensionsByType(document.GetMimetype())
-			if err != nil {
-				extension = exts[0]
+				log.Error().Err(err).Msg("Failed to handle image")
 			} else {
-				filename := document.FileName
-				extension = filepath.Ext(*filename)
+				log.Info().Str("path", path).Msg("Image saved")
 			}
-			path = filepath.Join(userDirectory, evt.Info.ID+extension)
-			err = os.WriteFile(path, data, 0600)
+		}
+
+		if audio := evt.Message.GetAudioMessage(); audio != nil {
+			path, err := downloadAndSaveMedia(mycli, evt, "audio",
+				func() ([]byte, error) { return mycli.WAClient.Download(audio) },
+				audio.GetMimetype,
+				exPath)
 			if err != nil {
-				log.Error().Err(err).Msg("Failed to save document")
-				return
+				log.Error().Err(err).Msg("Failed to handle audio")
+			} else {
+				log.Info().Str("path", path).Msg("Audio saved")
 			}
-			log.Info().Str("path", path).Msg("Document saved")
+		}
+
+		if document := evt.Message.GetDocumentMessage(); document != nil {
+			path, err := downloadAndSaveMedia(mycli, evt, "document",
+				func() ([]byte, error) { return mycli.WAClient.Download(document) },
+				document.GetMimetype,
+				exPath)
+			if err != nil {
+				log.Error().Err(err).Msg("Failed to handle document")
+			} else {
+				log.Info().Str("path", path).Msg("Document saved")
+			}
 		}
 	case *events.Receipt:
 		postmap["type"] = "ReadReceipt"
 		dowebhook = 1
-		if evt.Type == events.ReceiptTypeRead || evt.Type == events.ReceiptTypeReadSelf {
+		if evt.Type == types.ReceiptTypeRead || evt.Type == types.ReceiptTypeReadSelf {
 			log.Info().Strs("id", evt.MessageIDs).Str("source", evt.SourceString()).Time("timestamp", evt.Timestamp).Msg("Message was read")
-			if evt.Type == events.ReceiptTypeRead {
+			if evt.Type == types.ReceiptTypeRead {
 				postmap["state"] = "Read"
 			} else {
 				postmap["state"] = "ReadSelf"
 			}
-		} else if evt.Type == events.ReceiptTypeDelivered {
+		} else if evt.Type == types.ReceiptTypeDelivered {
 			postmap["state"] = "Delivered"
 			log.Info().Str("id", evt.MessageIDs[0]).Str("source", evt.SourceString()).Str("timestamp", fmt.Sprintf("%d", evt.Timestamp.Unix())).Msg("Message delivered")
 		} else {
@@ -699,7 +676,12 @@ func (mycli *MyClient) myEventHandler(rawEvt interface{}) {
 	case *events.ChatPresence:
 		postmap["type"] = "ChatPresence"
 		dowebhook = 1
-		log.Info().Str("state", fmt.Sprintf("%s", evt.State)).Str("media", fmt.Sprintf("%s", evt.Media)).Str("chat", evt.MessageSource.Chat.String()).Str("sender", evt.MessageSource.Sender.String()).Msg("Chat Presence received")
+		log.Info().
+			Str("state", fmt.Sprintf("%v", evt.State)).
+			Str("media", fmt.Sprintf("%v", evt.Media)).
+			Str("chat", evt.MessageSource.Chat.String()).
+			Str("sender", evt.MessageSource.Sender.String()).
+			Msg("Chat Presence received")
 	case *events.CallOffer:
 		log.Info().Str("event", fmt.Sprintf("%+v", evt)).Msg("Got call offer")
 	case *events.CallAccept:
@@ -732,19 +714,29 @@ func (mycli *MyClient) myEventHandler(rawEvt interface{}) {
 		if webhookurl != "" {
 			log.Info().Str("url", webhookurl).Msg("Calling webhook")
 			values, _ := json.Marshal(postmap)
+			data := map[string]string{
+				"jsonData": string(values),
+				"token":    mycli.token,
+			}
+
 			if path == "" {
-				data := make(map[string]string)
-				data["jsonData"] = string(values)
-				data["token"] = mycli.token
 				go callHook(webhookurl, data, mycli.userID)
 			} else {
-				data := make(map[string]string)
-				data["jsonData"] = string(values)
-				data["token"] = mycli.token
-				go callHookFile(webhookurl, data, mycli.userID, path)
+				// Create a channel to capture error from the goroutine
+				errChan := make(chan error, 1)
+				go func() {
+					err := callHookFile(webhookurl, data, mycli.userID, path)
+					errChan <- err
+				}()
+
+				// Optionally handle the error from the channel
+				if err := <-errChan; err != nil {
+					log.Error().Err(err).Msg("Error calling hook file")
+				}
 			}
 		} else {
 			log.Warn().Str("userid", strconv.Itoa(mycli.userID)).Msg("No webhook set for user")
 		}
 	}
+
 }

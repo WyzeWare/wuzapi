@@ -53,22 +53,36 @@ func callHook(myurl string, payload map[string]string, id int) {
 }
 
 // webhook for messages with file attachments
-func callHookFile(myurl string, payload map[string]string, id int, file string) {
+func callHookFile(myurl string, payload map[string]string, id int, file string) error {
 	log.Info().Str("file", file).Str("url", myurl).Msg("Sending POST")
-	clientHttp[id].R().SetFiles(map[string]string{
-		"file": file,
-	}).SetFormData(payload).Post(myurl)
+
+	resp, err := clientHttp[id].R().
+		SetFiles(map[string]string{
+			"file": file,
+		}).
+		SetFormData(payload).
+		Post(myurl)
+
+	if err != nil {
+		log.Error().Err(err).Str("url", myurl).Msg("Failed to send POST request")
+		return fmt.Errorf("failed to send POST request: %w", err)
+	}
+
+	// Optionally, you can log the response status
+	log.Info().Int("status", resp.StatusCode()).Msg("POST request completed")
+
+	return nil
 }
 
 // IsValidToken checks if the given token is exactly 32 alphanumeric characters
 // It returns a boolean indicating validity and an error with a specific message if invalid
 func IsValidToken(token string) (bool, error) {
 	if len(token) != 32 {
-		return false, fmt.Errorf("Invalid token length: expected 32 characters, got %d", len(token))
+		return false, fmt.Errorf("invalid token length: expected 32 characters, got %d", len(token))
 	}
 
 	if !regexp.MustCompile("^[a-zA-Z0-9]*$").MatchString(token) {
-		return false, fmt.Errorf("Invalid token format: contains non-alphanumeric characters")
+		return false, fmt.Errorf("invalid token format: contains non-alphanumeric characters")
 	}
 
 	return true, nil

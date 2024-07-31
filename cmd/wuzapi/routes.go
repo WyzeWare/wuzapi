@@ -8,7 +8,7 @@ import (
 	"github.com/rs/zerolog/hlog"
 )
 
-type Middleware = alice.Constructor
+// type Middleware = alice.Constructor
 
 func (s *server) routes() {
 	// We don't need to get the executable path here anymore as it's already in s.exPath
