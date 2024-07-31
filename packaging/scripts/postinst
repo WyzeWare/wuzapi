@@ -283,7 +283,7 @@ configure_postgres() {
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
 
-            -- Users Table   
+            -- Users Table     
             CREATE TABLE IF NOT EXISTS wuzapi.users (
                 id SERIAL PRIMARY KEY,
                 name TEXT NOT NULL,
@@ -293,14 +293,15 @@ configure_postgres() {
                 qrcode TEXT DEFAULT '',
                 connected INTEGER,
                 expiration INTEGER,
-                events TEXT DEFAULT 'All'
-                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                events TEXT DEFAULT 'All',
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                is_super_admin BOOLEAN DEFAULT FALSE,
+                is_admin BOOLEAN DEFAULT FALSE,
+                CONSTRAINT check_qrcode_for_super_admin CHECK (
+                    (is_super_admin = FALSE) OR (qrcode IS NULL OR qrcode = '')
+                )
             );
-
-            -- Add columns to users table
-            ALTER TABLE wuzapi.users ADD COLUMN is_super_admin BOOLEAN DEFAULT FALSE;
-            ALTER TABLE wuzapi.users ADD COLUMN is_admin BOOLEAN DEFAULT FALSE;
-
+            
             -- Junction table for user-organization relationships
             CREATE TABLE IF NOT EXISTS wuzapi.user_organizations (
                 user_id INTEGER NOT NULL,
