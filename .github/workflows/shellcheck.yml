@@ -22,12 +22,12 @@ jobs:
       - name: Install ShellCheck
         run: |
           sudo apt update
-          sudo apt install shellcheck
+          sudo apt install -y shellcheck
 
       - name: Run ShellCheck
         run: |
           shopt -s globstar nullglob
-          shellcheck --severity=warning --format=gcc **/*.sh
+          shellcheck --severity=warning --format=gcc -- **/*.sh
         
       - name: Summarize ShellCheck results
         if: always()
