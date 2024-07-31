@@ -407,6 +407,30 @@ func (s *server) startClient(userID int, textjid string, token string, subscript
 	}
 }
 
+// Add this helper function
+func downloadAndSaveMedia(mycli *MyClient, evt *events.Message, mediaType string, getData func() ([]byte, error), getMimeType func() string, exPath string) (string, error) {
+	txtid := strconv.Itoa(mycli.userID)
+	userDirectory := filepath.Join(exPath, "files", "user_"+txtid)
+
+	if err := os.MkdirAll(userDirectory, 0751); err != nil {
+		return "", fmt.Errorf("could not create user directory: %w", err)
+	}
+
+	data, err := getData()
+	if err != nil {
+		return "", fmt.Errorf("failed to download %s: %w", mediaType, err)
+	}
+
+	exts, _ := mime.ExtensionsByType(getMimeType())
+	path := filepath.Join(userDirectory, evt.Info.ID+exts[0])
+
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		return "", fmt.Errorf("failed to save %s: %w", mediaType, err)
+	}
+
+	return path, nil
+}
+
 func (mycli *MyClient) myEventHandler(rawEvt interface{}) {
 	txtid := strconv.Itoa(mycli.userID)
 	postmap := make(map[string]interface{})
@@ -525,101 +549,40 @@ func (mycli *MyClient) myEventHandler(rawEvt interface{}) {
 
 		log.Info().Str("id", evt.Info.ID).Str("source", evt.Info.SourceString()).Str("parts", strings.Join(metaParts, ", ")).Msg("Message Received")
 
-		// try to get Image if any
-		img := evt.Message.GetImageMessage()
-		if img != nil {
-
-			// check/creates user directory for files
-			userDirectory := filepath.Join(exPath, "files", "user_"+txtid)
-			_, err := os.Stat(userDirectory)
-			if os.IsNotExist(err) {
-				errDir := os.MkdirAll(userDirectory, 0751)
-				if errDir != nil {
-					log.Error().Err(errDir).Msg("Could not create user directory")
-					return
-				}
-			}
-
-			data, err := mycli.WAClient.Download(img)
+		if img := evt.Message.GetImageMessage(); img != nil {
+			path, err := downloadAndSaveMedia(mycli, evt, "image",
+				func() ([]byte, error) { return mycli.WAClient.Download(img) },
+				img.GetMimetype,
+				exPath)
 			if err != nil {
-				log.Error().Err(err).Msg("Failed to download image")
-				return
-			}
-			exts, _ := mime.ExtensionsByType(img.GetMimetype())
-			path = filepath.Join(userDirectory, evt.Info.ID+exts[0])
-			err = os.WriteFile(path, data, 0600)
-			if err != nil {
-				log.Error().Err(err).Msg("Failed to save image")
-				return
-			}
-			log.Info().Str("path", path).Msg("Image saved")
-		}
-
-		// try to get Audio if any
-		audio := evt.Message.GetAudioMessage()
-		if audio != nil {
-
-			// check/creates user directory for files
-			userDirectory := filepath.Join(exPath, "files", "user_"+txtid)
-			_, err := os.Stat(userDirectory)
-			if os.IsNotExist(err) {
-				errDir := os.MkdirAll(userDirectory, 0751)
-				if errDir != nil {
-					log.Error().Err(errDir).Msg("Could not create user directory")
-					return
-				}
-			}
-
-			data, err := mycli.WAClient.Download(audio)
-			if err != nil {
-				log.Error().Err(err).Msg("Failed to download audio")
-				return
-			}
-			exts, _ := mime.ExtensionsByType(audio.GetMimetype())
-			path = filepath.Join(userDirectory, evt.Info.ID+exts[0])
-			err = os.WriteFile(path, data, 0600)
-			if err != nil {
-				log.Error().Err(err).Msg("Failed to save audio")
-				return
-			}
-			log.Info().Str("path", path).Msg("Audio saved")
-		}
-
-		// try to get Document if any
-		document := evt.Message.GetDocumentMessage()
-		if document != nil {
-
-			// check/creates user directory for files
-			userDirectory := filepath.Join(exPath, "files", "user_"+txtid)
-			_, err := os.Stat(userDirectory)
-			if os.IsNotExist(err) {
-				errDir := os.MkdirAll(userDirectory, 0751)
-				if errDir != nil {
-					log.Error().Err(errDir).Msg("Could not create user directory")
-					return
-				}
-			}
-
-			data, err := mycli.WAClient.Download(document)
-			if err != nil {
-				log.Error().Err(err).Msg("Failed to download document")
-				return
-			}
-			extension := ""
-			exts, err := mime.ExtensionsByType(document.GetMimetype())
-			if err != nil {
-				extension = exts[0]
+				log.Error().Err(err).Msg("Failed to handle image")
 			} else {
-				filename := document.FileName
-				extension = filepath.Ext(*filename)
+				log.Info().Str("path", path).Msg("Image saved")
 			}
-			path = filepath.Join(userDirectory, evt.Info.ID+extension)
-			err = os.WriteFile(path, data, 0600)
+		}
+
+		if audio := evt.Message.GetAudioMessage(); audio != nil {
+			path, err := downloadAndSaveMedia(mycli, evt, "audio",
+				func() ([]byte, error) { return mycli.WAClient.Download(audio) },
+				audio.GetMimetype,
+				exPath)
 			if err != nil {
-				log.Error().Err(err).Msg("Failed to save document")
-				return
+				log.Error().Err(err).Msg("Failed to handle audio")
+			} else {
+				log.Info().Str("path", path).Msg("Audio saved")
 			}
-			log.Info().Str("path", path).Msg("Document saved")
+		}
+
+		if document := evt.Message.GetDocumentMessage(); document != nil {
+			path, err := downloadAndSaveMedia(mycli, evt, "document",
+				func() ([]byte, error) { return mycli.WAClient.Download(document) },
+				document.GetMimetype,
+				exPath)
+			if err != nil {
+				log.Error().Err(err).Msg("Failed to handle document")
+			} else {
+				log.Info().Str("path", path).Msg("Document saved")
+			}
 		}
 	case *events.Receipt:
 		postmap["type"] = "ReadReceipt"
