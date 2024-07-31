@@ -2267,7 +2267,7 @@ func (s *server) DownloadMedia(mediaType string) http.HandlerFunc {
 		data, err := clientPointer[userid].Download(downloadable)
 		if err != nil {
 			log.Error().Str("error", fmt.Sprintf("%v", err)).Msgf("Failed to download %s", mediaType)
-			s.Respond(w, r, http.StatusInternalServerError, fmt.Errorf("Failed to download %s %v", mediaType, err))
+			s.Respond(w, r, http.StatusInternalServerError, fmt.Errorf("failed to download %s %v", mediaType, err))
 			return
 		}
 
