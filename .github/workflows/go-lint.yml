@@ -30,7 +30,16 @@ jobs:
 
     - name: Install golangci-lint
       run: |
-        curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $(go env GOPATH)/bin v1.55.2
+        LINT_VERSION=v1.55.2
+        GO_BIN=$(go env GOPATH)/bin
+
+        if ! command -v golangci-lint &> /dev/null; then
+          echo "Installing golangci-lint version $LINT_VERSION..."
+          curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b "$GO_BIN" "$LINT_VERSION"
+        else
+          echo "golangci-lint is already installed."
+        fi
+
 
     - name: Run golangci-lint
       run: golangci-lint run -v ./...
