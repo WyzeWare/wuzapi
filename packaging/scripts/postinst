@@ -7,6 +7,10 @@ SQLITE_WA_DB_PATH="/var/lib/wuzapi/wa.db"
 LOG_FILE="/var/log/wuzapi/postinstall.log"
 USER="wuzapi"
 TIMEOUT=30  # Timeout in seconds for user prompts
+SETUP_TOKEN_FILE="/etc/wuzapi/setup_token" # For generating super users. 
+SETUP_TOKEN_EXPIRY=86400 # Token valid for 24 hours (in seconds)
+# flag to track if a new database was created
+NEW_DB_CREATED=false
 
 # Ensure log directory exists and is writable
 sudo mkdir -p "$(dirname "$LOG_FILE")" || { echo "Failed to create log directory"; exit 1; }
@@ -65,6 +69,17 @@ choose_database() {
     done
 }
 
+generate_setup_token() {
+    local token=$(openssl rand -hex 16)
+    local expiry=$(($(date +%s) + SETUP_TOKEN_EXPIRY))
+    echo "${token}:${expiry}" | sudo tee "$SETUP_TOKEN_FILE" > /dev/null
+    sudo chown root:root "$SETUP_TOKEN_FILE"
+    sudo chmod 600 "$SETUP_TOKEN_FILE"
+    log "Setup token generated and saved to $SETUP_TOKEN_FILE"
+    echo "Use this token to create the first super admin: $token"
+    echo "This token will expire in 1 hours."
+}
+
 configure_sqlite() {
     log "Configuring SQLite3..."
     
@@ -100,6 +115,7 @@ EOF
         log "SQLite database created successfully with unique token"
         sudo chown wuzapi:wuzapi "$SQLITE_APP_DB_PATH"
         sudo chmod 640 "$SQLITE_APP_DB_PATH"
+        NEW_DB_CREATED=true
         log "Permissions set on $SQLITE_APP_DB_PATH"
     else
         log "Failed to create SQLite database"
@@ -260,6 +276,7 @@ configure_postgres() {
             if ! pg_execute "SELECT 1 FROM pg_database WHERE datname='$db'" | grep -q 1; then
                 log "Creating database '$db'..."
                 pg_execute "CREATE DATABASE $db OWNER wuzapi;"
+                NEW_DB_CREATED=true
             fi
             log "Granting all privileges on '$db' database to 'wuzapi' user..."
             pg_execute "GRANT ALL PRIVILEGES ON DATABASE $db TO wuzapi;"
@@ -504,3 +521,7 @@ log "Wuzapi post-installation completed"
 log "Log file is available at $LOG_FILE"
 
 echo "Wuzapi installation completed successfully!"
+
+if [ "$NEW_DB_CREATED" = true ]; then
+    generate_setup_token
+fi
