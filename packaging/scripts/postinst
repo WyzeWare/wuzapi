@@ -77,7 +77,7 @@ generate_setup_token() {
     sudo chmod 600 "$SETUP_TOKEN_FILE"
     log "Setup token generated and saved to $SETUP_TOKEN_FILE"
     echo "Use this token to create the first super admin: $token"
-    echo "This token will expire in 1 hours."
+    echo "This token will expire in 24 hours."
 }
 
 configure_sqlite() {
@@ -283,15 +283,15 @@ configure_postgres() {
         done
 
         log "Creating schema and granting privileges for wuzapi_app..."
-        pg_execute_db "wuzapi_app" "
+        pg_execute_db "wuzapi_app" `
             CREATE SCHEMA IF NOT EXISTS wuzapi;
             GRANT ALL PRIVILEGES ON SCHEMA wuzapi TO wuzapi;
             GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA wuzapi TO wuzapi;
             GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA wuzapi TO wuzapi;
-        "
+        `
 
         log "Creating users table in wuzapi_app..."
-        if pg_execute_db "wuzapi_app" "
+        if pg_execute_db "wuzapi_app" `
             -- Existing tables
             CREATE TABLE IF NOT EXISTS wuzapi.organizations (
                 id SERIAL PRIMARY KEY,
@@ -398,7 +398,7 @@ configure_postgres() {
             CREATE INDEX IF NOT EXISTS idx_user_organizations_org ON wuzapi.user_organizations(organization_id);
             CREATE INDEX IF NOT EXISTS idx_users_super_admin ON wuzapi.users(is_super_admin);
             CREATE INDEX IF NOT EXISTS idx_users_admin ON wuzapi.users(is_admin);
-        "; then
+        `; then
             log "PostgreSQL table created successfully with super organizations and super admin constraints."
         else
             log "Failed to create PostgreSQL tables."
@@ -406,12 +406,12 @@ configure_postgres() {
         fi
 
         log "Creating schema for wuzapi_wa..."
-        pg_execute_db "wuzapi_wa" "
+        pg_execute_db "wuzapi_wa" `
             CREATE SCHEMA IF NOT EXISTS whatsmeow;
             GRANT USAGE ON SCHEMA whatsmeow TO wuzapi;
             GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA whatsmeow TO wuzapi;
             GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA whatsmeow TO wuzapi;
-        "
+        `
 
         echo "HOST=localhost" > "$POSTGRES_CONFIG_FILE"
         echo "USER=wuzapi" >> "$POSTGRES_CONFIG_FILE"
