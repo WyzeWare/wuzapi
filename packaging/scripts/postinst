@@ -7,14 +7,12 @@ SQLITE_WA_DB_PATH="/var/lib/wuzapi/wa.db"
 LOG_FILE="/var/log/wuzapi/postinstall.log"
 USER="wuzapi"
 TIMEOUT=30  # Timeout in seconds for user prompts
-SETUP_TOKEN_FILE="/etc/wuzapi/setup_token" # For generating super users. 
-SETUP_TOKEN_EXPIRY=86400 # Token valid for 24 hours (in seconds)
 # flag to track if a new database was created
 NEW_DB_CREATED=false
 
 # Ensure log directory exists and is writable
 sudo mkdir -p "$(dirname "$LOG_FILE")" || { echo "Failed to create log directory"; exit 1; }
-sudo chown wuzapi:wuzapi "$(dirname "$LOG_FILE")" || { echo "Failed to change ownership of log directory"; exit 1; }
+sudo chown -R $USER:$USER  "$(dirname "$LOG_FILE")" || { echo "Failed to change ownership of log directory"; exit 1; }
 sudo chmod 755 "$(dirname "$LOG_FILE")" || { echo "Failed to set permissions on log directory"; exit 1; }
 
 # Redirect output to log file
@@ -70,14 +68,10 @@ choose_database() {
 }
 
 generate_setup_token() {
-    local token=$(openssl rand -hex 16)
-    local expiry=$(($(date +%s) + SETUP_TOKEN_EXPIRY))
-    echo "${token}:${expiry}" | sudo tee "$SETUP_TOKEN_FILE" > /dev/null
-    sudo chown root:root "$SETUP_TOKEN_FILE"
-    sudo chmod 600 "$SETUP_TOKEN_FILE"
-    log "Setup token generated and saved to $SETUP_TOKEN_FILE"
-    echo "Use this token to create the first super admin: $token"
-    echo "This token will expire in 24 hours."
+    local token=$(openssl rand -hex 32)
+    local expiry=$(date -d "+24 hours" +"%Y-%m-%d %H:%M:%S")
+    local hashed_token=$(echo -n "$token" | openssl dgst -sha256 -binary | openssl base64)
+    echo "$token:$hashed_token:$expiry"
 }
 
 configure_sqlite() {
@@ -113,7 +107,7 @@ CREATE TABLE IF NOT EXISTS users (
 EOF
     then
         log "SQLite database created successfully with unique token"
-        sudo chown wuzapi:wuzapi "$SQLITE_APP_DB_PATH"
+        sudo chown -R $USER:$USER  "$SQLITE_APP_DB_PATH"
         sudo chmod 640 "$SQLITE_APP_DB_PATH"
         NEW_DB_CREATED=true
         log "Permissions set on $SQLITE_APP_DB_PATH"
@@ -180,7 +174,7 @@ if sudo -u wuzapi test -w /var/lib/wuzapi; then
 else
     log "Error: User 'wuzapi' does not have write access to /var/lib/wuzapi"
     log "Attempting to fix permissions..."
-    sudo chown -R wuzapi:wuzapi /var/lib/wuzapi
+    sudo chown -R -R $USER:$USER  /var/lib/wuzapi
     sudo chmod -R 755 /var/lib/wuzapi
     if sudo -u wuzapi test -w /var/lib/wuzapi; then
         log "Permissions fixed successfully"
@@ -283,27 +277,53 @@ configure_postgres() {
         done
 
         log "Creating schema and granting privileges for wuzapi_app..."
-        pg_execute_db "wuzapi_app" `
+
+        pg_execute_db "wuzapi_app" "
             CREATE SCHEMA IF NOT EXISTS wuzapi;
             GRANT ALL PRIVILEGES ON SCHEMA wuzapi TO wuzapi;
+            
+            -- Grant privileges on existing tables (if any)
             GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA wuzapi TO wuzapi;
+            
+            -- Grant privileges on existing sequences (if any)
             GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA wuzapi TO wuzapi;
-        `
+
+            -- Set default privileges for future tables
+            ALTER DEFAULT PRIVILEGES IN SCHEMA wuzapi 
+            GRANT ALL PRIVILEGES ON TABLES TO wuzapi;
+
+            -- Set default privileges for future sequences
+            ALTER DEFAULT PRIVILEGES IN SCHEMA wuzapi 
+            GRANT ALL PRIVILEGES ON SEQUENCES TO wuzapi;
+        "
 
         log "Creating users table in wuzapi_app..."
-        if pg_execute_db "wuzapi_app" `
-            -- Existing tables
+        if pg_execute_db "wuzapi_app" "
+            CREATE TABLE IF NOT EXISTS setup_token (
+                id SERIAL PRIMARY KEY,
+                token VARCHAR(64) NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                expires_at TIMESTAMP NOT NULL
+            );
+
+            GRANT ALL PRIVILEGES ON TABLE setup_token TO wuzapi;
+
+            CREATE TABLE IF NOT EXISTS wuzapi.super_organizations (
+                id SERIAL PRIMARY KEY,
+                name TEXT NOT NULL UNIQUE,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+
             CREATE TABLE IF NOT EXISTS wuzapi.organizations (
                 id SERIAL PRIMARY KEY,
                 name TEXT NOT NULL UNIQUE,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
 
-            -- Users Table     
             CREATE TABLE IF NOT EXISTS wuzapi.users (
                 id SERIAL PRIMARY KEY,
                 name TEXT NOT NULL,
-                token TEXT NOT NULL UNIQUE CHECK(length(token) = 32 AND token ~ '^[A-Za-z0-9]{32}$'),
+                token TEXT NOT NULL UNIQUE CHECK(length(token) = 64 AND token ~ '^[A-Za-z0-9]{32}$'),
                 webhook TEXT DEFAULT '',
                 jid TEXT DEFAULT '',
                 qrcode TEXT DEFAULT '',
@@ -314,17 +334,10 @@ configure_postgres() {
                 is_super_admin BOOLEAN DEFAULT FALSE,
                 is_admin BOOLEAN DEFAULT FALSE,
                 super_organization_id INTEGER,
-                CONSTRAINT check_qrcode_for_super_admin CHECK (
-                    (is_super_admin = FALSE) OR (qrcode IS NULL OR qrcode = '')
-                ),
                 CONSTRAINT fk_super_organization FOREIGN KEY (super_organization_id)
-                    REFERENCES wuzapi.super_organizations(id) ON DELETE RESTRICT,
-                CONSTRAINT check_super_admin_org CHECK (
-                    (is_super_admin = FALSE) OR (super_organization_id IS NOT NULL)
-                )
+                    REFERENCES wuzapi.super_organizations(id) ON DELETE RESTRICT
             );
-            
-            -- Junction table for user-organization relationships
+
             CREATE TABLE IF NOT EXISTS wuzapi.user_organizations (
                 user_id INTEGER NOT NULL,
                 organization_id INTEGER NOT NULL,
@@ -343,62 +356,96 @@ configure_postgres() {
                 created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
             );
 
-            -- New super_organizations table
-            CREATE TABLE IF NOT EXISTS wuzapi.super_organizations (
-                id SERIAL PRIMARY KEY,
-                name TEXT NOT NULL UNIQUE,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            CREATE TABLE IF NOT EXISTS wuzapi.super_organization_admins (
+                user_id INTEGER NOT NULL,
+                super_organization_id INTEGER NOT NULL,
+                PRIMARY KEY (user_id, super_organization_id),
+                FOREIGN KEY (user_id) REFERENCES wuzapi.users(id) ON DELETE CASCADE,
+                FOREIGN KEY (super_organization_id) REFERENCES wuzapi.super_organizations(id) ON DELETE CASCADE,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
             );
 
-            -- Function to ensure super admin belongs to a super organization
-            CREATE OR REPLACE FUNCTION wuzapi.ensure_super_admin_belongs_to_super_org() RETURNS TRIGGER AS $$
+            -- Function to check if users exist
+            CREATE OR REPLACE FUNCTION wuzapi.users_exist() RETURNS BOOLEAN AS \$\$
             BEGIN
-                IF OLD.is_super_admin AND OLD.super_organization_id IS NULL THEN
-                    RAISE EXCEPTION 'Super admin must belong to a super organization';
-                END IF;
-                RETURN OLD;
+                RETURN EXISTS (SELECT 1 FROM wuzapi.users);
             END;
-            $$ LANGUAGE plpgsql;
+            \$\$ LANGUAGE plpgsql;
+
+            -- Ensure super admins belong to a super organization
+            CREATE OR REPLACE FUNCTION wuzapi.ensure_super_admin_belongs_to_super_org() RETURNS TRIGGER AS \$\$
+            BEGIN
+                IF wuzapi.users_exist() THEN
+                    IF NEW.is_super_admin AND NEW.super_organization_id IS NULL THEN
+                        RAISE EXCEPTION 'Super admin must belong to a super organization when users exist';
+                    END IF;
+                END IF;
+                RETURN NEW;
+            END;
+            \$\$ LANGUAGE plpgsql;
 
             CREATE TRIGGER enforce_super_admin_super_org
             BEFORE INSERT OR UPDATE ON wuzapi.users
             FOR EACH ROW EXECUTE FUNCTION wuzapi.ensure_super_admin_belongs_to_super_org();
 
-            -- Function to ensure at least one super organization exists
-            CREATE OR REPLACE FUNCTION wuzapi.ensure_super_organization_exists() RETURNS TRIGGER AS $$
+            CREATE OR REPLACE FUNCTION wuzapi.ensure_super_organization_exists() RETURNS TRIGGER AS \$\$
             BEGIN
-                IF NOT EXISTS (SELECT 1 FROM wuzapi.super_organizations) THEN
-                    RAISE EXCEPTION 'At least one super organization must exist';
+                IF wuzapi.users_exist() THEN
+                    IF NOT EXISTS (SELECT 1 FROM wuzapi.super_organizations) THEN
+                        RAISE EXCEPTION 'At least one super organization must exist when users are present';
+                    END IF;
                 END IF;
                 RETURN OLD;
             END;
-            $$ LANGUAGE plpgsql;
+            \$\$ LANGUAGE plpgsql;
 
             CREATE TRIGGER ensure_super_org_exists
-            AFTER INSERT OR UPDATE ON wuzapi.super_organizations
-            FOR EACH ROW EXECUTE FUNCTION wuzapi.ensure_super_organization_exists();
+            AFTER DELETE ON wuzapi.super_organizations
+            FOR EACH STATEMENT EXECUTE FUNCTION wuzapi.ensure_super_organization_exists();
 
-            -- Function to ensure super admin exists
-            CREATE OR REPLACE FUNCTION wuzapi.ensure_super_admin_exists() RETURNS TRIGGER AS $$
+            CREATE OR REPLACE FUNCTION wuzapi.ensure_super_admin_exists() RETURNS TRIGGER AS \$\$
             BEGIN
-                IF NOT EXISTS (SELECT 1 FROM wuzapi.users WHERE is_super_admin = TRUE) THEN
-                    RAISE EXCEPTION 'At least one super admin must exist';
+                IF wuzapi.users_exist() THEN
+                    IF NOT EXISTS (SELECT 1 FROM wuzapi.users WHERE is_super_admin = TRUE) THEN
+                        RAISE EXCEPTION 'At least one super admin must exist when users are present';
+                    END IF;
                 END IF;
                 RETURN OLD;
             END;
-            $$ LANGUAGE plpgsql;
+            \$\$ LANGUAGE plpgsql;
 
             CREATE TRIGGER prevent_delete_last_super_admin
             AFTER DELETE OR UPDATE ON wuzapi.users
-            FOR EACH ROW EXECUTE FUNCTION wuzapi.ensure_super_admin_exists();
-            
-            -- Indexes for Performance
+            FOR EACH STATEMENT EXECUTE FUNCTION wuzapi.ensure_super_admin_exists();
+
+                        -- Ensure each super organization has an admin
+            CREATE OR REPLACE FUNCTION wuzapi.ensure_super_org_has_admin() RETURNS TRIGGER AS \$\$
+            BEGIN
+                IF wuzapi.users_exist() THEN
+                    IF NOT EXISTS (
+                        SELECT 1 FROM wuzapi.super_organization_admins
+                        WHERE super_organization_id = NEW.id
+                    ) THEN
+                        RAISE EXCEPTION 'Each super organization must have at least one admin when users exist';
+                    END IF;
+                END IF;
+                RETURN NEW;
+            END;
+            \$\$ LANGUAGE plpgsql;
+
+            CREATE TRIGGER enforce_super_org_admin
+            AFTER INSERT OR UPDATE ON wuzapi.super_organizations
+            FOR EACH ROW EXECUTE FUNCTION wuzapi.ensure_super_org_has_admin();
+
+            -- Indexes
             CREATE INDEX IF NOT EXISTS idx_users_token ON wuzapi.users(token);
             CREATE INDEX IF NOT EXISTS idx_user_organizations_user ON wuzapi.user_organizations(user_id);
             CREATE INDEX IF NOT EXISTS idx_user_organizations_org ON wuzapi.user_organizations(organization_id);
             CREATE INDEX IF NOT EXISTS idx_users_super_admin ON wuzapi.users(is_super_admin);
             CREATE INDEX IF NOT EXISTS idx_users_admin ON wuzapi.users(is_admin);
-        `; then
+            CREATE INDEX IF NOT EXISTS idx_super_org_admins_user ON wuzapi.super_organization_admins(user_id);
+            CREATE INDEX IF NOT EXISTS idx_super_org_admins_org ON wuzapi.super_organization_admins(super_organization_id);
+        "; then
             log "PostgreSQL table created successfully with super organizations and super admin constraints."
         else
             log "Failed to create PostgreSQL tables."
@@ -406,19 +453,39 @@ configure_postgres() {
         fi
 
         log "Creating schema for wuzapi_wa..."
-        pg_execute_db "wuzapi_wa" `
+        pg_execute_db "wuzapi_wa" "
             CREATE SCHEMA IF NOT EXISTS whatsmeow;
             GRANT USAGE ON SCHEMA whatsmeow TO wuzapi;
             GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA whatsmeow TO wuzapi;
             GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA whatsmeow TO wuzapi;
-        `
+
+            -- Set default privileges for future tables
+            ALTER DEFAULT PRIVILEGES IN SCHEMA whatsmeow 
+            GRANT ALL PRIVILEGES ON TABLES TO wuzapi;
+
+            -- Set default privileges for future sequences
+            ALTER DEFAULT PRIVILEGES IN SCHEMA whatsmeow
+            GRANT ALL PRIVILEGES ON SEQUENCES TO wuzapi;
+        "
 
         echo "HOST=localhost" > "$POSTGRES_CONFIG_FILE"
         echo "USER=wuzapi" >> "$POSTGRES_CONFIG_FILE"
         echo "PASSWORD=$wuzapi_password" >> "$POSTGRES_CONFIG_FILE"
         echo "APP_DATABASE=wuzapi_app" >> "$POSTGRES_CONFIG_FILE"
         echo "WA_DATABASE=wuzapi_wa" >> "$POSTGRES_CONFIG_FILE"
-        log "PostgreSQL configuration saved."
+        log "PostgreSQL configuration saved. $NEW_DB_CREATED"
+
+        if [[ "$NEW_DB_CREATED" == "true" ]]; then
+            log "Creating setup tokens"
+            local token_info=$(generate_setup_token)
+            IFS=':' read -r token hashed_token expiry <<< "$token_info"
+            
+            pg_execute_db "wuzapi_app" "INSERT INTO setup_token (token, expires_at) VALUES ('$hashed_token', '$expiry');"
+
+            log "Setup token generated and saved to the database"
+            echo "Use this token to create the first super admin: $token"
+            echo "This token will expire in 24 hours."
+        fi
     else
         custom_postgres_config
     fi
@@ -526,7 +593,3 @@ log "Wuzapi post-installation completed"
 log "Log file is available at $LOG_FILE"
 
 echo "Wuzapi installation completed successfully!"
-
-if [ "$NEW_DB_CREATED" = true ]; then
-    generate_setup_token
-fi
