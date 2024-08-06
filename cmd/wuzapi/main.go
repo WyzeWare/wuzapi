@@ -26,9 +26,10 @@ import (
 )
 
 type server struct {
-	db     *sql.DB
-	router *mux.Router
-	exPath string
+	db         *sql.DB
+	router     *mux.Router
+	exPath     string
+	debugSetup bool
 }
 
 var (
