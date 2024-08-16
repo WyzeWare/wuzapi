@@ -4,6 +4,7 @@ CONFIG_FILE="/etc/wuzapi/config"
 POSTGRES_CONFIG_FILE="/etc/wuzapi/postgres_config"
 SQLITE_APP_DB_PATH="/var/lib/wuzapi/app.db"
 SQLITE_WA_DB_PATH="/var/lib/wuzapi/wa.db"
+SALT_FILE="/var/lib/wuzapi/salt"
 LOG_FILE="/var/log/wuzapi/postinstall.log"
 USER="wuzapi"
 TIMEOUT=30  # Timeout in seconds for user prompts
@@ -67,11 +68,46 @@ choose_database() {
     done
 }
 
+generate_salt() {
+    # Ensure directory exists and has appropriate permissions
+    sudo mkdir -p "$(dirname "$SALT_FILE")" || { log "Failed to create directory for SALT file"; exit 1; }
+    sudo chown -R $USER:$USER "$(dirname "$SALT_FILE")" || { log "Failed to change ownership of SALT directory"; exit 1; }
+    sudo chmod -R 755 "$(dirname "$SALT_FILE")" || { log "Failed to set permissions for SALT directory"; exit 1; }
+
+    # Remove the salt file if it already exists
+    if [ -f "$SALT_FILE" ]; then
+        sudo rm -f "$SALT_FILE" || { log "Failed to delete existing SALT file"; exit 1; }
+    fi
+
+    # Generate a 16-byte random salt and save it to the salt file
+    local SALT=$(openssl rand -base64 16)
+    echo "$SALT" | sudo tee "$SALT_FILE" > /dev/null || { log "Failed to write salt to file"; exit 1; }
+
+    # Set permissions for the salt file
+    sudo chown -R $USER:$USER "$SALT_FILE" || { log "Failed to set permissions for SALT file"; exit 1; }
+    sudo chmod 600 "$SALT_FILE" || { log "Failed to set permissions for SALT file"; exit 1; }
+}
+
 generate_setup_token() {
     local token=$(openssl rand -hex 32)
-    local expiry=$(date -d "+24 hours" +"%Y-%m-%d %H:%M:%S")
-    local hashed_token=$(echo -n "$token" | openssl dgst -sha256 -binary | openssl base64)
-    echo "$token:$hashed_token:$expiry"
+    local expiry=$(date -u -d "+24 hours" +"%Y-%m-%d %H:%M:%S")
+
+    # Hashing a password
+    local salt=$(cat "$SALT_FILE")
+
+    # Hashing function using SHA-256
+    hash() {
+        echo -n "$2$1" | openssl dgst -sha256 -hex | awk '{print $2}'
+    }
+
+    # Hash the token with the salt
+    local hashed_token=$(hash "$token" "$salt")
+    local base64_encoded_hashed_token=$(echo -n "$hashed_token" | tr -d '[:space:]' | base64 | tr -d '[:space:]')
+
+    # Return the values as separate lines
+    echo "TOKEN=$token"
+    echo "ENCODED_HASHED_TOKEN=$base64_encoded_hashed_token"
+    echo "EXPIRY=$expiry"
 }
 
 configure_sqlite() {
@@ -96,7 +132,7 @@ PRAGMA foreign_keys = ON;
 CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
-    token TEXT NOT NULL UNIQUE CHECK(length(token) = 32 AND token GLOB '*[A-Za-z0-9]*'),
+    token TEXT NOT NULL UNIQUE CHECK(length(token) >= 59 AND length(token) <= 100),
     webhook TEXT DEFAULT '',
     jid TEXT DEFAULT '',
     qrcode TEXT DEFAULT '',
@@ -301,7 +337,7 @@ configure_postgres() {
         if pg_execute_db "wuzapi_app" "
             CREATE TABLE IF NOT EXISTS setup_token (
                 id SERIAL PRIMARY KEY,
-                token VARCHAR(64) NOT NULL,
+                token TEXT NOT NULL UNIQUE CHECK(length(token) >= 59 AND length(token) <= 100),
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 expires_at TIMESTAMP NOT NULL
             );
@@ -323,7 +359,7 @@ configure_postgres() {
             CREATE TABLE IF NOT EXISTS wuzapi.users (
                 id SERIAL PRIMARY KEY,
                 name TEXT NOT NULL,
-                token TEXT NOT NULL UNIQUE CHECK(length(token) = 64 AND token ~ '^[A-Za-z0-9]{32}$'),
+                token TEXT NOT NULL UNIQUE CHECK(length(token) >= 59 AND length(token) <= 100),
                 webhook TEXT DEFAULT '',
                 jid TEXT DEFAULT '',
                 qrcode TEXT DEFAULT '',
@@ -477,14 +513,22 @@ configure_postgres() {
 
         if [[ "$NEW_DB_CREATED" == "true" ]]; then
             log "Creating setup tokens"
-            local token_info=$(generate_setup_token)
-            IFS=':' read -r token hashed_token expiry <<< "$token_info"
+            generate_salt || { log "Failed to generate salt"; exit 1; }
             
-            pg_execute_db "wuzapi_app" "INSERT INTO setup_token (token, expires_at) VALUES ('$hashed_token', '$expiry');"
+            # Capture the output of generate_setup_token
+            while IFS='=' read -r key value; do
+                case "$key" in
+                    TOKEN) token="$value" ;;
+                    ENCODED_HASHED_TOKEN) base64_encoded_hashed_token="$value" ;;
+                    EXPIRY) expiry="$value" ;;
+                esac
+            done < <(generate_setup_token)
+
+            pg_execute_db "wuzapi_app" "INSERT INTO setup_token (token, expires_at) VALUES ('$base64_encoded_hashed_token', '$expiry');"
 
             log "Setup token generated and saved to the database"
             echo "Use this token to create the first super admin: $token"
-            echo "This token will expire in 24 hours."
+            echo "This token will expire in 24 hours. (at: $expiry)"
         fi
     else
         custom_postgres_config

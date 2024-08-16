@@ -24,7 +24,7 @@ type SetupResult struct {
 	UserID     int    `json:"user_id"`
 	SuperOrgID int    `json:"super_organization_id"`
 	Message    string `json:"message"`
-	Token      string `json:"token" binding:"required"`
+	Token      string `json:"token"`
 }
 
 var setupLock sync.Once
@@ -79,7 +79,7 @@ func (s *server) performSetup(req SuperAdminRequest) (SetupResult, error) {
 
 	// Generate a token
 	token := generateToken()
-	hashedToken := hashToken(token)
+	hashedToken := HashToken(token, salt)
 
 	// Create super organization
 	err = tx.QueryRow(`
@@ -128,7 +128,6 @@ func (s *server) performSetup(req SuperAdminRequest) (SetupResult, error) {
 		Message:    "Super admin setup completed successfully",
 	}, nil
 }
-
 func (s *server) validateSetupToken(providedToken string) bool {
 	var dbToken string
 	var expiresAt time.Time
@@ -136,15 +135,19 @@ func (s *server) validateSetupToken(providedToken string) bool {
 	// Retrieve the latest setup token and its expiration time from the database
 	err := s.db.QueryRow("SELECT token, expires_at FROM setup_token ORDER BY created_at DESC LIMIT 1").Scan(&dbToken, &expiresAt)
 	if err != nil {
-		log.Error().Err(err).Msg("Error retrieving setup token from database")
+		// Use your preferred logging method here
+		fmt.Printf("Error retrieving setup token from database: %v\n", err)
 		return false
 	}
 
-	// Hash the provided token (if the token in dbToken is hashed)
-	hashedProvidedToken := hashToken(providedToken)
+	// Compare the provided token with the stored token and check expiration
+	isValid, err := VerifyToken(providedToken, dbToken, salt, expiresAt)
+	if err != nil {
+		fmt.Printf("Error verifying token: %v\n", err)
+		return false
+	}
 
-	// Compare the hashed provided token with the stored token and check expiration
-	return hashedProvidedToken == dbToken && time.Now().Before(expiresAt)
+	return isValid
 }
 
 func (s *server) deleteSetupToken() error {
@@ -153,7 +156,7 @@ func (s *server) deleteSetupToken() error {
 }
 
 func generateToken() string {
-	bytes := make([]byte, 64)
+	bytes := make([]byte, 32) // 32 bytes to get a 64-character hex string
 	if _, err := rand.Read(bytes); err != nil {
 		panic(err)
 	}
@@ -172,10 +175,32 @@ func (s *server) respondWithJSON(w http.ResponseWriter, code int, payload interf
 	_, _ = w.Write(response)
 }
 
-// Hashing function for the token
-func hashToken(token string) string {
-	hash := sha256.New()
-	hash.Write([]byte(token))
-	hashedBytes := hash.Sum(nil)
-	return base64.StdEncoding.EncodeToString(hashedBytes)
+// HashToken hashes a token with a salt using SHA-256
+func HashToken(token, salt string) string {
+	hasher := sha256.New()
+	hasher.Write([]byte(salt + token))
+	return hex.EncodeToString(hasher.Sum(nil))
+}
+
+// VerifyToken checks if the provided token is valid
+func VerifyToken(providedToken, storedHashedToken, salt string, expiry time.Time) (bool, error) {
+	// Decode the base64 encoded hashed token
+	decodedHashedToken, err := base64.StdEncoding.DecodeString(storedHashedToken)
+	if err != nil {
+		return false, fmt.Errorf("error decoding hashed token: %v", err)
+	}
+
+	// Hash the provided token
+	hashedProvidedToken := HashToken(providedToken, salt)
+	// Compare the hashed provided token with the decoded stored hash
+	if hashedProvidedToken != string(decodedHashedToken) {
+		return false, nil
+	}
+
+	// Check if the token has expired
+	if time.Now().After(expiry) {
+		return false, fmt.Errorf("token has expired")
+	}
+
+	return true, nil
 }

@@ -43,10 +43,12 @@ var (
 	sslprivkey = flag.String("sslprivatekey", "", "SSL Certificate Private Key File")
 	adminToken = flag.String("admintoken", "", "Security Token to authorize admin actions (list/create/remove users)")
 
-	configFile  = flag.String("config", "/etc/wuzapi/config", "Path to the configuration file")
-	postgresCfg = flag.String("postgresconfig", "/etc/wuzapi/postgres_config", "Path to the PostgreSQL configuration file")
+	configFile   = flag.String("config", "/etc/wuzapi/config", "Path to the configuration file")
+	saltFilePath = flag.String("salt", "/var/lib/wuzapi/salt", "Path to the salt file")
+	postgresCfg  = flag.String("postgresconfig", "/etc/wuzapi/postgres_config", "Path to the PostgreSQL configuration file")
 
 	dbType        string
+	salt          string
 	container     *sqlstore.Container
 	killchannel   = make(map[int](chan bool))
 	userinfocache = cache.New(5*time.Minute, 10*time.Minute)
@@ -83,9 +85,24 @@ func ParseConfigFile(filename string) (Config, error) {
 	return config, nil
 }
 
+// ReadSalt reads the salt from a file
+func ReadSalt(filePath string) (string, error) {
+	salt, err := os.ReadFile(filePath)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(salt)), nil
+}
+
 func init() {
 	flag.Parse()
 
+	var err error
+
+	salt, err = ReadSalt(*saltFilePath)
+	if err != nil {
+		log.Fatal().Err(err).Msg("Failed to read salt from file")
+	}
 	// Set up logging to file
 	logPath := "/var/log/wuzapi/wuzapi.log"
 	if os.Getenv("WUZAPI_LOG_PATH") != "" {
