@@ -3,6 +3,7 @@ package main
 import (
 	"crypto/rand"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -72,7 +73,13 @@ func (s *server) performSetup(req SuperAdminRequest) (SetupResult, error) {
 	if err != nil {
 		return SetupResult{}, fmt.Errorf("failed to start transaction: %v", err)
 	}
-	defer tx.Rollback()
+
+	// Ensure rollback is handled if needed
+	defer func() {
+		if err := tx.Rollback(); err != nil && err != sql.ErrTxDone {
+			fmt.Printf("failed to rollback transaction: %v\n", err)
+		}
+	}()
 
 	var superOrgID int
 	var userID int
@@ -128,6 +135,7 @@ func (s *server) performSetup(req SuperAdminRequest) (SetupResult, error) {
 		Message:    "Super admin setup completed successfully",
 	}, nil
 }
+
 func (s *server) validateSetupToken(providedToken string) bool {
 	var dbToken string
 	var expiresAt time.Time
