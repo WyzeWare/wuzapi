@@ -11,6 +11,19 @@ much less memory and CPU than those solutions. The drawback is that a change
 in the WhatsApp protocol could break connections and will require a library 
 update.
 
+### ⚠️ Warning: Unstable/Experimental Repository
+
+**Please be aware that this repository is currently under heavy development and is considered unstable.**
+
+- **Experimental Features**: The codebase is in an experimental phase, with frequent changes being made. Features may be added, modified, or removed without notice.
+- **Potential Issues**: You may encounter bugs, crashes, or incomplete functionality. Use this repository at your own risk.
+- **Not for Production Use**: This version is not suitable for production environments. We recommend only using it for testing, experimentation, or contributing to the development process.
+- **Frequent Updates**: Expect frequent updates and possible breaking changes. Make sure to pull the latest changes regularly and review the commit history.
+
+**If you encounter any issues or have suggestions, please feel free to open an issue or submit a pull request.**
+
+Thank you for your understanding and contribution to the project!
+
 ## :warning: Warning
 
 **Using this software violating WhatsApp ToS can get your number banned**: 
