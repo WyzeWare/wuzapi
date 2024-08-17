@@ -2,12 +2,12 @@
 
 # Function to install a package if it's not already installed
 install_if_needed() {
-    PACKAGE_NAME=$1
-    INSTALL_COMMAND=$2
+    PACKAGE_NAME="$1"
+    INSTALL_COMMAND="$2"
 
-    if ! dpkg -l | grep -q $PACKAGE_NAME; then
+    if ! dpkg -l | grep -q "$PACKAGE_NAME"; then
         echo "Installing $PACKAGE_NAME..."
-        eval $INSTALL_COMMAND
+        eval "$INSTALL_COMMAND"
     else
         echo "$PACKAGE_NAME is already installed."
     fi
@@ -41,9 +41,14 @@ if [[ "$OSTYPE" == "darwin"* ]]; then
     fi
 
     echo "Setting up environment variables for OpenSSL..."
-    export PKG_CONFIG_PATH=$(brew --prefix openssl)/lib/pkgconfig
-    export CGO_LDFLAGS="-L$(brew --prefix openssl)/lib"
-    export CGO_CFLAGS="-I$(brew --prefix openssl)/include"
+    
+    # Declare the variables first
+    brew_prefix=$(brew --prefix openssl)
+    
+    # Assign the variables
+    export PKG_CONFIG_PATH="$brew_prefix/lib/pkgconfig"
+    export CGO_LDFLAGS="-L$brew_prefix/lib"
+    export CGO_CFLAGS="-I$brew_prefix/include"
 fi
 
 echo "All required tools are installed and configured."
