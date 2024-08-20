@@ -23,6 +23,8 @@ import (
 	waLog "go.mau.fi/whatsmeow/util/log"
 	"gopkg.in/natefinch/lumberjack.v2"
 	_ "modernc.org/sqlite"
+
+	"wuzapi/internal/database"
 )
 
 type server struct {
@@ -155,6 +157,12 @@ func main() {
 			log.Fatal().Err(err).Msg("Could not open SQLite WhatsApp database")
 		}
 
+		// Run SQLite migrations
+		migrationPaths := []string{"migrations/sqlite"}
+		if err := database.RunMigrations(appDB, "sqlite3", appDBPath, migrationPaths); err != nil {
+			log.Fatal().Err(err).Msg("Failed to apply SQLite migrations")
+		}
+
 	case "postgresql":
 		pgConfig, err := ParseConfigFile(*postgresCfg)
 		if err != nil {
@@ -180,6 +188,13 @@ func main() {
 		if err != nil {
 			log.Fatal().Err(err).Msg("Could not open PostgreSQL WhatsApp database")
 		}
+		// Run PostgreSQL migrations
+		if err := database.RunMigrations(appDB, "postgres", pgConfig["APP_DATABASE"], []string{"migrations/postgresql/wuzapi_app"}); err != nil {
+			log.Fatal().Err(err).Msg("Failed to apply PostgreSQL application migrations")
+		}
+		if err := database.RunMigrations(appDB, "postgres", pgConfig["WA_DATABASE"], []string{"migrations/postgresql/wuzapi_wa"}); err != nil {
+			log.Fatal().Err(err).Msg("Failed to apply PostgreSQL WhatsApp migrations")
+		}
 
 	default:
 		log.Fatal().Msg("Invalid database type specified")
@@ -201,9 +216,7 @@ func main() {
 	done := make(chan os.Signal, 1)
 	signal.Notify(done, os.Interrupt, syscall.SIGINT, syscall.SIGTERM)
 
-	var srv *http.Server
-
-	timeoutConfig := &http.Server{
+	srv := &http.Server{
 		Addr:              *address + ":" + *port,
 		Handler:           s.router,
 		ReadHeaderTimeout: 20 * time.Second,
@@ -212,21 +225,19 @@ func main() {
 		IdleTimeout:       180 * time.Second,
 	}
 
-	if *sslcert != "" && *sslprivkey != "" {
-		// TLS server
-		go func() {
-			if err := timeoutConfig.ListenAndServeTLS(*sslcert, *sslprivkey); err != nil && err != http.ErrServerClosed {
+	go func() {
+		if *sslcert != "" && *sslprivkey != "" {
+			// TLS server
+			if err := srv.ListenAndServeTLS(*sslcert, *sslprivkey); err != nil && err != http.ErrServerClosed {
 				log.Fatal().Err(err).Msg("Server startup failed")
 			}
-		}()
-	} else {
-		// Non-TLS server
-		go func() {
-			if err := timeoutConfig.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		} else {
+			// Non-TLS server
+			if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 				log.Fatal().Err(err).Msg("Server startup failed")
 			}
-		}()
-	}
+		}
+	}()
 
 	log.Info().Str("address", *address).Str("port", *port).Msg("Server started")
 
