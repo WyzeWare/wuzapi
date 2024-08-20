@@ -15,6 +15,8 @@ func (s *server) routes() {
 
 	// Remove the logType check as we've eliminated that flag
 	// The log is now configured in the main function, so we don't need to set it up here
+	setupRoutes := s.router.PathPrefix("/setup").Subrouter()
+	setupRoutes.Handle("/users/super-admin", s.setupSuperAdminHandler()).Methods("POST")
 
 	adminRoutes := s.router.PathPrefix("/admin").Subrouter()
 	adminRoutes.Use(s.authadmin)

@@ -49,7 +49,22 @@ type MyClient struct {
 
 // Connects to Whatsapp Websocket on server startup if last state was connected
 func (s *server) connectOnStartup() {
-	rows, err := s.db.Query("SELECT id, token, jid, webhook, events, osname, platformtype FROM users WHERE connected=1")
+	var err error
+	var rows *sql.Rows
+	var query string
+
+	switch dbType {
+	case "sqlite":
+		query = "SELECT id, token, jid, webhook, events, osname, platformtype FROM users WHERE connected=1"
+	case "postgresql":
+		query = "SELECT id, token, jid, webhook, events, osname, platformtype FROM users WHERE connected=1"
+
+	default:
+		log.Error().Msg("Unsupported database type for updating connection status")
+		return
+
+	}
+	rows, err = s.db.Query(query)
 	if err != nil {
 		log.Error().Err(err).Msg("DB Problem")
 		return
@@ -294,7 +309,7 @@ func (s *server) startClient(userID int, textjid string, token string, subscript
 					case "sqlite3":
 						sqlStmt = `UPDATE users SET qrcode=? WHERE id=?`
 					case "postgresql":
-						sqlStmt = `UPDATE users SET qrcode=$1 WHERE id=$2`
+						sqlStmt = `UPDATE wuzapi.users SET qrcode=$1 WHERE id=$2`
 					default:
 						log.Error().Err(err).Msg(
 							"Failed to store encoded/embedded base64 QR on database for retrieval with the /qr endpoint. Unsupported database")
@@ -314,7 +329,7 @@ func (s *server) startClient(userID int, textjid string, token string, subscript
 					case "sqlite3":
 						sqlStmt = `UPDATE users SET qrcode=? WHERE id=?`
 					case "postgresql":
-						sqlStmt = `UPDATE users SET qrcode=$1 WHERE id=$2`
+						sqlStmt = `UPDATE wuzapi.users SET qrcode=$1 WHERE id=$2`
 					default:
 						log.Error().Msg("Unsupported database type for clearing QR code")
 						return
@@ -340,7 +355,7 @@ func (s *server) startClient(userID int, textjid string, token string, subscript
 					case "sqlite3":
 						sqlStmt = `UPDATE users SET qrcode=? WHERE id=?`
 					case "postgresql":
-						sqlStmt = `UPDATE users SET qrcode=$1 WHERE id=$2`
+						sqlStmt = `UPDATE wuzapi.users SET qrcode=$1 WHERE id=$2`
 					default:
 						log.Error().Msg("Unsupported database type for updating QR code")
 						return
@@ -385,7 +400,7 @@ func (s *server) startClient(userID int, textjid string, token string, subscript
 			case "sqlite3":
 				sqlStmt = `UPDATE users SET connected=0 WHERE id=?`
 			case "postgresql":
-				sqlStmt = `UPDATE users SET connected=0 WHERE id=$1`
+				sqlStmt = `UPDATE wuzapi.users SET connected=0 WHERE id=$1`
 			default:
 				log.Error().Msg("Unsupported database type for updating connection status")
 				return

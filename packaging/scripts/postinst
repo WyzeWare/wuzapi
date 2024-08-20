@@ -4,13 +4,14 @@ CONFIG_FILE="/etc/wuzapi/config"
 POSTGRES_CONFIG_FILE="/etc/wuzapi/postgres_config"
 SQLITE_APP_DB_PATH="/var/lib/wuzapi/app.db"
 SQLITE_WA_DB_PATH="/var/lib/wuzapi/wa.db"
+SALT_FILE="/var/lib/wuzapi/salt"
 LOG_FILE="/var/log/wuzapi/postinstall.log"
 USER="wuzapi"
 TIMEOUT=30  # Timeout in seconds for user prompts
 
 # Ensure log directory exists and is writable
 sudo mkdir -p "$(dirname "$LOG_FILE")" || { echo "Failed to create log directory"; exit 1; }
-sudo chown wuzapi:wuzapi "$(dirname "$LOG_FILE")" || { echo "Failed to change ownership of log directory"; exit 1; }
+sudo chown -R $USER:$USER "$(dirname "$LOG_FILE")" || { echo "Failed to change ownership of log directory"; exit 1; }
 sudo chmod 755 "$(dirname "$LOG_FILE")" || { echo "Failed to set permissions on log directory"; exit 1; }
 
 # Redirect output to log file
@@ -42,6 +43,7 @@ prompt_yes_no() {
         esac
     done
 }
+
 choose_database_message() {
     echo "Please choose a database:"
     echo "1) PostgreSQL (default)"
@@ -67,119 +69,134 @@ choose_database() {
 
 configure_sqlite() {
     log "Configuring SQLite3..."
-    
-    # Prompt user if they want multiple organizations
+
+    create_directory() {
+        local dir_path=$1
+        sudo mkdir -p "$dir_path" || { log "Failed to create directory: $dir_path"; exit 1; }
+        sudo chown -R $USER:$USER "$dir_path" || { log "Failed to change ownership of directory: $dir_path"; exit 1; }
+        sudo chmod 755 "$dir_path" || { log "Failed to set permissions for directory: $dir_path"; exit 1; }
+    }
+
+    apply_migrations() {
+        local db_path=$1
+        log "Applying migrations to database at $db_path"
+        if sudo -u wuzapi sqlite3 "$db_path" < "path/to/migrations/migration_001_create_users_table.sql"; then
+            log "Migrations applied successfully"
+            sudo chown -R $USER:$USER  "$db_path"
+            sudo chmod 640 "$db_path"
+            log "Permissions set on $db_path"
+        else
+            log "Failed to apply migrations to database at $db_path"
+            exit 1
+        fi
+    }
+
+    handle_existing_database() {
+        local db_path=$1
+        log "SQLite database already exists at $db_path"
+
+        if prompt_yes_no "Do you want to reset the existing database?"; then
+            log "Resetting SQLite database..."
+            rm "$SQLITE_APP_DB_PATH"
+            rm "$SQLITE_WA_DB_PATH"
+            configure_sqlite
+            return
+        else
+            sqlite3 "$db_path" "PRAGMA foreign_keys = ON;"
+        fi
+    }
+
+    # Check for multiple organizations prompt
     if prompt_yes_no "Do you want to configure multiple organizations?"; then
         log "Note: SQLite does not support multiple organizations. Proceeding with single-organization setup."
     fi
-    sudo mkdir -p "$(dirname "$SQLITE_APP_DB_PATH")" || { log "Failed to create directory for SQLite database"; exit 1; }
-    sudo chown -R $USER:$USER "$(dirname "$SQLITE_APP_DB_PATH")" || { log "Failed to change ownership of SQLite database directory"; exit 1; }
-    sudo chmod 755 "$(dirname "$SQLITE_APP_DB_PATH")" || { log "Failed to set permissions for SQLite database directory"; exit 1; }
-    
-    sudo mkdir -p "$(dirname "$SQLITE_WA_DB_PATH")" || { log "Failed to create directory for SQLite database"; exit 1; }
-    sudo chown -R $USER:$USER "$(dirname "$SQLITE_WA_DB_PATH")" || { log "Failed to change ownership of SQLite database directory"; exit 1; }
-    sudo chmod 755 "$(dirname "$SQLITE_WA_DB_PATH")" || { log "Failed to set permissions for SQLite database directory"; exit 1; }
 
-if [ ! -f "$SQLITE_APP_DB_PATH" ]; then
-    log "Creating new SQLite database at $SQLITE_APP_DB_PATH"
-    if sudo -u wuzapi sqlite3 "$SQLITE_APP_DB_PATH" <<EOF
-PRAGMA foreign_keys = ON;
-CREATE TABLE IF NOT EXISTS users (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL,
-    token TEXT NOT NULL UNIQUE CHECK(length(token) = 32 AND token GLOB '*[A-Za-z0-9]*'),
-    webhook TEXT DEFAULT '',
-    jid TEXT DEFAULT '',
-    qrcode TEXT DEFAULT '',
-    connected INTEGER,
-    expiration INTEGER,
-    events TEXT DEFAULT 'All'
-);
-EOF
-    then
-        log "SQLite database created successfully with unique token"
-        sudo chown wuzapi:wuzapi "$SQLITE_APP_DB_PATH"
-        sudo chmod 640 "$SQLITE_APP_DB_PATH"
-        log "Permissions set on $SQLITE_APP_DB_PATH"
+    # Directory setup
+    create_directory "$(dirname "$SQLITE_APP_DB_PATH")"
+    create_directory "$(dirname "$SQLITE_WA_DB_PATH")"
+
+    # Database setup
+    if [ ! -f "$SQLITE_APP_DB_PATH" ]; then
+        apply_migrations "$SQLITE_APP_DB_PATH"
     else
-        log "Failed to create SQLite database"
+        handle_existing_database "$SQLITE_APP_DB_PATH"
+    fi
+
+    # Ensure the SQLite database was created
+    if [ ! -f "$SQLITE_APP_DB_PATH" ]; then
+        log "Failed to create SQLite database. Please check your permissions and SQLite installation."
         exit 1
     fi
-else
-    log "SQLite database already exists at $SQLITE_APP_DB_PATH"
-    
-    # Add UNIQUE constraint to existing table if it doesn't already exist
-    if ! sudo -u wuzapi sqlite3 "$SQLITE_APP_DB_PATH" "PRAGMA index_list('users');" | grep -q "token"; then
-        log "Adding UNIQUE constraint to token in existing database"
-        if sudo -u wuzapi sqlite3 "$SQLITE_APP_DB_PATH" <<EOF
-        CREATE UNIQUE INDEX IF NOT EXISTS idx_users_token ON users(token);
-EOF
-        then
-            log "UNIQUE constraint added successfully"
-        else
-            log "Failed to add UNIQUE constraint to existing database"
-            exit 1
-        fi
-    else
-        log "UNIQUE constraint on token already exists"
-    fi
 
-    if prompt_yes_no "Do you want to reset the existing database?"; then
-        log "Resetting SQLite database..."
-        rm "$SQLITE_APP_DB_PATH"
-        rm "$SQLITE_WA_DB_PATH"
-        configure_sqlite
-        return
-    else
-        sqlite3 "$SQLITE_APP_DB_PATH" "PRAGMA foreign_keys = ON;"
-        sqlite3 "$SQLITE_WA_DB_PATH" "PRAGMA foreign_keys = ON;"
-    fi
-fi
-
-# Final check
-if [ ! -f "$SQLITE_APP_DB_PATH" ]; then
-    log "Failed to create SQLite database. Please check your permissions and SQLite installation."
-    exit 1
-fi
-
-# Check if wuzapi user exists
-if id "wuzapi" &>/dev/null; then
-    log "User 'wuzapi' exists"
-    user_info=$(id wuzapi)
-    log "User details: $user_info"
-else
-    log "Error: User 'wuzapi' does not exist."
-    log "Attempting to create user 'wuzapi'..."
-    if sudo useradd -r -s /bin/false wuzapi; then
-        log "User 'wuzapi' created successfully"
-    else
-        log "Failed to create user 'wuzapi'. Please create this user manually and run the script again."
-        exit 1
-    fi
-fi
-
-# Verify user's ability to access required directories
-if sudo -u wuzapi test -w /var/lib/wuzapi; then
-    log "User 'wuzapi' has write access to /var/lib/wuzapi"
-else
-    log "Error: User 'wuzapi' does not have write access to /var/lib/wuzapi"
-    log "Attempting to fix permissions..."
-    sudo chown -R wuzapi:wuzapi /var/lib/wuzapi
-    sudo chmod -R 755 /var/lib/wuzapi
-    if sudo -u wuzapi test -w /var/lib/wuzapi; then
-        log "Permissions fixed successfully"
-    else
-        log "Failed to fix permissions. Please check and fix manually."
-        exit 1
-    fi
-fi
-
+    # Save configuration
     echo "DB_TYPE=sqlite3" > "$CONFIG_FILE"
-    # In the configure_sqlite function:
     echo "APP_DB_PATH=$SQLITE_APP_DB_PATH" >> "$CONFIG_FILE"
     echo "WA_DB_PATH=$SQLITE_WA_DB_PATH" >> "$CONFIG_FILE"
     echo "SQLITE_FOREIGN_KEYS=ON" >> "$CONFIG_FILE"
     log "SQLite3 configuration saved."
+}
+
+
+# Common function to create databases and users
+create_db_and_user() {
+    local db_name=$1
+    local db_user=$2
+    local db_password=$3
+
+    # Function to execute PostgreSQL commands
+    pg_execute() {
+        sudo -u postgres psql -c "$1"
+    }
+
+    # Check if database exists
+    if pg_execute "SELECT 1 FROM pg_database WHERE datname='$db_name'" | grep -q 1; then
+        log "Database '$db_name' exists."
+        if prompt_yes_no "Do you want to drop and recreate the '$db_name' database?"; then
+            log "Dropping database '$db_name'..."
+            pg_execute "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '$db_name';"
+            pg_execute "DROP DATABASE IF EXISTS $db_name;"
+        else
+            log "Continuing with the existing '$db_name' database."
+        fi
+    fi
+
+    # Create the database
+    if ! pg_execute "SELECT 1 FROM pg_database WHERE datname='$db_name'" | grep -q 1; then
+        log "Creating database '$db_name'..."
+        pg_execute "CREATE DATABASE $db_name OWNER $db_user;"
+    fi
+
+    # Check if user exists
+    if pg_execute "SELECT 1 FROM pg_roles WHERE rolname='$db_user'" | grep -q 1; then
+        log "User '$db_user' exists."
+        if prompt_yes_no "Do you want to delete and recreate the '$db_user' user?"; then
+            log "Deleting user '$db_user'..."
+            pg_execute "REASSIGN OWNED BY $db_user TO postgres;"
+            pg_execute "DROP OWNED BY $db_user;"
+            pg_execute "DROP USER IF EXISTS $db_user;"
+            log "Creating user '$db_user'..."
+            pg_execute "CREATE USER $db_user WITH PASSWORD '$db_password';"
+        else
+            log "Continuing with the existing '$db_user' user."
+            if prompt_yes_no "Do you want to set a new password for the '$db_user' user?"; then
+                pg_execute "ALTER USER $db_user WITH PASSWORD '$db_password';"
+            else
+                read -t $TIMEOUT -s -p "Enter the current password for '$db_user' user: " db_password
+                if [ $? -ne 0 ]; then
+                    echo "No input received within $TIMEOUT seconds, exiting."
+                    exit 1
+                fi
+                echo
+            fi
+        fi
+    else
+        log "Creating user '$db_user'..."
+        pg_execute "CREATE USER $db_user WITH PASSWORD '$db_password';"
+    fi
+    pg_execute "ALTER DATABASE $db_name OWNER TO $db_user;"
+    pg_execute "GRANT ALL PRIVILEGES ON DATABASE $db_name TO $db_user;"
+    log "User '$db_user' is now the owner of database '$db_name' and has been granted all privileges."
+    log "User '$db_user' granted privileges on database '$db_name'."
 }
 
 configure_postgres() {
@@ -203,303 +220,59 @@ configure_postgres() {
         log "Successfully connected to local PostgreSQL instance."
         wuzapi_password=$(openssl rand -base64 48)
 
-        # Function to execute PostgreSQL commands
-        pg_execute() {
-            sudo -u postgres psql -c "$1"
-        }
+        create_db_and_user "wuzapi_app" "wuzapi" "$wuzapi_password"
+        create_db_and_user "wuzapi_wa" "wuzapi" "$wuzapi_password"
 
-        # Function to execute PostgreSQL commands on a specific database
-        pg_execute_db() {
-            sudo -u postgres psql -d "$1" -c "$2"
-        }
-
-        # Terminate connections and drop databases if they exist
-        for db in wuzapi_app wuzapi_wa; do
-            if pg_execute "SELECT 1 FROM pg_database WHERE datname='$db'" | grep -q 1; then
-                log "Database '$db' exists."
-                if prompt_yes_no "Do you want to drop and recreate the '$db' database?"; then
-                    log "Dropping database '$db'..."
-                    pg_execute "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '$db';"
-                    pg_execute "DROP DATABASE IF EXISTS $db;"
-                else
-                    log "Continuing with the existing '$db' database."
-                fi
-            fi
-        done
-
-        # Now handle the user
-        if pg_execute "SELECT 1 FROM pg_roles WHERE rolname='wuzapi'" | grep -q 1; then
-            log "User 'wuzapi' exists."
-            if prompt_yes_no "Do you want to delete and recreate the 'wuzapi' user?"; then
-                log "Deleting user 'wuzapi'..."
-                pg_execute "REASSIGN OWNED BY wuzapi TO postgres;"
-                pg_execute "DROP OWNED BY wuzapi;"
-                pg_execute "DROP USER IF EXISTS wuzapi;"
-                log "Creating user 'wuzapi'..."
-                pg_execute "CREATE USER wuzapi WITH PASSWORD '$wuzapi_password';"
-            else
-                log "Continuing with the existing 'wuzapi' user."
-                if prompt_yes_no "Do you want to set a new password for the 'wuzapi' user?"; then
-                    pg_execute "ALTER USER wuzapi WITH PASSWORD '$wuzapi_password';"
-                else
-                    read -t $TIMEOUT -s -p "Enter the current password for 'wuzapi' user: " wuzapi_password
-                    if [ $? -ne 0 ]; then
-                        echo "No input received within $TIMEOUT seconds, exiting."
-                        exit 1
-                    fi
-                    echo
-                fi
-            fi
-        else
-            log "Creating user 'wuzapi'..."
-            pg_execute "CREATE USER wuzapi WITH PASSWORD '$wuzapi_password';"
-        fi
-
-        # Now recreate the databases
-        for db in wuzapi_app wuzapi_wa; do
-            if ! pg_execute "SELECT 1 FROM pg_database WHERE datname='$db'" | grep -q 1; then
-                log "Creating database '$db'..."
-                pg_execute "CREATE DATABASE $db OWNER wuzapi;"
-            fi
-            log "Granting all privileges on '$db' database to 'wuzapi' user..."
-            pg_execute "GRANT ALL PRIVILEGES ON DATABASE $db TO wuzapi;"
-        done
-
-        log "Creating schema and granting privileges for wuzapi_app..."
-        pg_execute_db "wuzapi_app" "
-            CREATE SCHEMA IF NOT EXISTS wuzapi;
-            GRANT ALL PRIVILEGES ON SCHEMA wuzapi TO wuzapi;
-            GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA wuzapi TO wuzapi;
-            GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA wuzapi TO wuzapi;
-        "
-
-        log "Creating users table in wuzapi_app..."
-        if pg_execute_db "wuzapi_app" "
-
-            -- Organizations Table
-            CREATE TABLE IF NOT EXISTS wuzapi.organizations (
-                id SERIAL PRIMARY KEY,
-                name TEXT NOT NULL UNIQUE,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            );
-
-            -- Users Table   
-            CREATE TABLE IF NOT EXISTS wuzapi.users (
-                id SERIAL PRIMARY KEY,
-                name TEXT NOT NULL,
-                token TEXT NOT NULL UNIQUE CHECK(length(token) = 32 AND token ~ '^[A-Za-z0-9]{32}$'),
-                webhook TEXT DEFAULT '',
-                jid TEXT DEFAULT '',
-                qrcode TEXT DEFAULT '',
-                connected INTEGER,
-                expiration INTEGER,
-                events TEXT DEFAULT 'All'
-                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-            );
-
-            -- Add columns to users table
-            ALTER TABLE wuzapi.users ADD COLUMN is_super_admin BOOLEAN DEFAULT FALSE;
-            ALTER TABLE wuzapi.users ADD COLUMN is_admin BOOLEAN DEFAULT FALSE;
-
-            -- Junction table for user-organization relationships
-            CREATE TABLE IF NOT EXISTS wuzapi.user_organizations (
-                user_id INTEGER NOT NULL,
-                organization_id INTEGER NOT NULL,
-                PRIMARY KEY (user_id, organization_id),
-                FOREIGN KEY (user_id) REFERENCES wuzapi.users(id) ON DELETE CASCADE,
-                FOREIGN KEY (organization_id) REFERENCES wuzapi.organizations(id) ON DELETE RESTRICT,
-                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-            );
-
-            -- Function to ensure user belongs to at least one organization
-            CREATE OR REPLACE FUNCTION wuzapi.ensure_user_in_organization() RETURNS TRIGGER AS $$
-            BEGIN
-                IF NOT EXISTS (SELECT 1 FROM wuzapi.user_organizations WHERE user_id = OLD.user_id) THEN
-                    RAISE EXCEPTION 'User must belong to at least one organization';
-                END IF;
-                RETURN OLD;
-            END;
-            $$ LANGUAGE plpgsql;
-
-            -- Trigger to prevent removing a user's last organization
-            CREATE TRIGGER prevent_remove_last_organization
-            AFTER DELETE ON wuzapi.user_organizations
-            FOR EACH ROW EXECUTE FUNCTION wuzapi.ensure_user_in_organization();
-
-            -- Create table to track organization admins
-            CREATE TABLE IF NOT EXISTS wuzapi.organization_admins (
-                user_id INTEGER NOT NULL,
-                organization_id INTEGER NOT NULL,
-                PRIMARY KEY (user_id, organization_id),
-                FOREIGN KEY (user_id) REFERENCES wuzapi.users(id) ON DELETE CASCADE,
-                FOREIGN KEY (organization_id) REFERENCES wuzapi.organizations(id) ON DELETE CASCADE,
-                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-            );
-
-            -- Function to ensure at least one super admin exists
-            CREATE OR REPLACE FUNCTION wuzapi.ensure_super_admin_exists() RETURNS TRIGGER AS $$
-            BEGIN
-                IF NOT EXISTS (SELECT 1 FROM wuzapi.users WHERE is_super_admin = TRUE) THEN
-                    RAISE EXCEPTION 'At least one super admin must exist';
-                END IF;
-                RETURN OLD;
-            END;
-            $$ LANGUAGE plpgsql;
-
-            -- Trigger to prevent deleting last super admin
-            CREATE TRIGGER prevent_delete_last_super_admin
-            AFTER DELETE OR UPDATE ON wuzapi.users
-            FOR EACH ROW EXECUTE FUNCTION wuzapi.ensure_super_admin_exists();
-
-            -- Function to ensure each organization has at least one admin
-            CREATE OR REPLACE FUNCTION wuzapi.ensure_org_has_admin() RETURNS TRIGGER AS $$
-            BEGIN
-                IF NOT EXISTS (SELECT 1 FROM wuzapi.organization_admins WHERE organization_id = OLD.organization_id) THEN
-                    RAISE EXCEPTION 'Each organization must have at least one admin';
-                END IF;
-                RETURN OLD;
-            END;
-            $$ LANGUAGE plpgsql;
-
-            -- Trigger to prevent deleting last admin of an organization
-            CREATE TRIGGER prevent_delete_last_org_admin
-            AFTER DELETE ON wuzapi.organization_admins
-            FOR EACH ROW EXECUTE FUNCTION wuzapi.ensure_org_has_admin();
-    
-            -- Indexes for Performance
-            CREATE INDEX IF NOT EXISTS idx_users_token ON wuzapi.users(token);
-            CREATE INDEX IF NOT EXISTS idx_user_organizations_user ON wuzapi.user_organizations(user_id);
-            CREATE INDEX IF NOT EXISTS idx_user_organizations_org ON wuzapi.user_organizations(organization_id);
-            CREATE INDEX IF NOT EXISTS idx_users_super_admin ON wuzapi.users(is_super_admin);
-            CREATE INDEX IF NOT EXISTS idx_users_admin ON wuzapi.users(is_admin);       
-
-            ALTER DEFAULT PRIVILEGES IN SCHEMA wuzapi GRANT ALL PRIVILEGES ON TABLES TO wuzapi;
-            ALTER DEFAULT PRIVILEGES IN SCHEMA wuzapi GRANT ALL PRIVILEGES ON SEQUENCES TO wuzapi;
-
-        "; then
-            log "PostgreSQL table created successfully with unique token"
-        else
-            log "Failed to create PostgreSQL table"
-            exit 1
-        fi
-
-        log "Creating schema for wuzapi_wa..."
-        pg_execute_db "wuzapi_wa" "
-            CREATE SCHEMA IF NOT EXISTS whatsmeow;
-            GRANT USAGE ON SCHEMA whatsmeow TO wuzapi;
-            GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA whatsmeow TO wuzapi;
-            GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA whatsmeow TO wuzapi;
-        "
-
-        echo "HOST=localhost" > "$POSTGRES_CONFIG_FILE"
-        echo "USER=wuzapi" >> "$POSTGRES_CONFIG_FILE"
-        echo "PASSWORD=$wuzapi_password" >> "$POSTGRES_CONFIG_FILE"
-        echo "APP_DATABASE=wuzapi_app" >> "$POSTGRES_CONFIG_FILE"
-        echo "WA_DATABASE=wuzapi_wa" >> "$POSTGRES_CONFIG_FILE"
+        echo "DB_TYPE=postgresql" > "$CONFIG_FILE"
+        echo "POSTGRES_USER=wuzapi" >> "$CONFIG_FILE"
+        echo "POSTGRES_PASSWORD=$wuzapi_password" >> "$CONFIG_FILE"
         log "PostgreSQL configuration saved."
     else
+        log "Local PostgreSQL instance not used. Proceeding with custom configuration."
         custom_postgres_config
     fi
 }
 
 custom_postgres_config() {
-    log "Please provide PostgreSQL configuration details:"
-    read -t $TIMEOUT -p "Host: " pg_host
-    if [ $? -ne 0 ]; then
-        echo "No input received within $TIMEOUT seconds, exiting."
-        exit 1
-    fi
-    read -t $TIMEOUT -p "Username: " pg_user
-    if [ $? -ne 0 ]; then
-        echo "No input received within $TIMEOUT seconds, exiting."
-        exit 1
-    fi
-    read -t $TIMEOUT -s -p "Password: " pg_password
-    if [ $? -ne 0 ]; then
-        echo "No input received within $TIMEOUT seconds, exiting."
-        exit 1
-    fi
+    log "Starting custom PostgreSQL configuration..."
+
+    read -p "Enter the PostgreSQL host: " host
+    read -p "Enter the PostgreSQL port (default: 5432): " port
+    port=${port:-5432}
+    read -p "Enter the PostgreSQL admin user: " admin_user
+    read -s -p "Enter the PostgreSQL admin password: " admin_password
+    echo
+    read -p "Enter the name of the application database: " app_db_name
+    read -p "Enter the name of the monitoring database: " wa_db_name
+    read -p "Enter the name of the PostgreSQL user to create: " db_user
+    read -s -p "Enter the password for the PostgreSQL user: " db_password
     echo
 
-    echo "HOST=$pg_host" > "$POSTGRES_CONFIG_FILE"
-    echo "USER=$pg_user" >> "$POSTGRES_CONFIG_FILE"
-    echo "PASSWORD=$pg_password" >> "$POSTGRES_CONFIG_FILE"
+    export PGPASSWORD="$admin_password"
+
+    # Create databases and user
+    create_db_and_user "$app_db_name" "$db_user" "$db_password"
+    create_db_and_user "$wa_db_name" "$db_user" "$db_password"
+
+    echo "DB_TYPE=postgresql" > "$CONFIG_FILE"
+    echo "POSTGRES_HOST=$host" >> "$CONFIG_FILE"
+    echo "POSTGRES_PORT=$port" >> "$CONFIG_FILE"
+    echo "POSTGRES_USER=$db_user" >> "$CONFIG_FILE"
+    echo "POSTGRES_PASSWORD=$db_password" >> "$CONFIG_FILE"
     log "Custom PostgreSQL configuration saved."
 }
 
-if [ -f "$CONFIG_FILE" ]; then
-    log "An existing configuration file was found at $CONFIG_FILE"
-    if prompt_yes_no "Do you want to override the existing configuration?"; then
-        log "Proceeding with new configuration..."
-    else
-        log "Keeping existing configuration. Installation completed."
-        exit 0
-    fi
-fi
+case $(choose_database) in
+    postgresql)
+        configure_postgres
+        ;;
+    sqlite3)
+        configure_sqlite
+        ;;
+    *)
+        log "Invalid choice. Exiting."
+        exit 1
+        ;;
+esac
 
-DB_CHOICE=$(choose_database)
-mkdir -p /etc/wuzapi || { log "Failed to create configuration directory"; exit 1; }
-echo "DB_TYPE=$DB_CHOICE" > "$CONFIG_FILE"
-
-if [ "$DB_CHOICE" = "postgresql" ]; then
-    configure_postgres
-elif [ "$DB_CHOICE" = "sqlite3" ]; then
-    configure_sqlite
-fi
-
-log "Database choice ($DB_CHOICE) has been saved to $CONFIG_FILE"
-
-if [ "$DB_CHOICE" = "postgresql" ]; then
-    log "PostgreSQL configuration has been saved to $POSTGRES_CONFIG_FILE"
-elif [ "$DB_CHOICE" = "sqlite3" ]; then
-    log "SQLite3 configuration has been saved to $CONFIG_FILE"
-fi
-
-if [ ! -f "/etc/systemd/system/wuzapi.service" ]; then
-    log "Creating systemd service file"
-    sudo tee /etc/systemd/system/wuzapi.service > /dev/null <<EOF
-[Unit]
-Description=Wuzapi Service
-After=network.target
-
-[Service]
-User=wuzapi
-Group=wuzapi
-ExecStart=/usr/local/bin/wuzapi
-Restart=on-failure
-RestartSec=5
-StandardOutput=syslog
-StandardError=syslog
-SyslogIdentifier=wuzapi
-
-[Install]
-WantedBy=multi-user.target
-EOF
-    sudo chmod 644 /etc/systemd/system/wuzapi.service
-fi
-
-log "Reloading systemd"
-sudo systemctl daemon-reload
-
-log "Enabling and starting wuzapi service"
-sudo systemctl enable wuzapi.service
-sudo systemctl start wuzapi.service
-sudo systemctl restart wuzapi.service
-
-if sudo systemctl is-active --quiet wuzapi.service; then
-    log "Wuzapi service is running"
-else
-    log "Warning: Wuzapi service failed to start. Please check the logs."
-fi
-
-log "Running a test command as the wuzapi user"
-sudo -u wuzapi bash <<EOF
-echo "This command is run as the wuzapi user"
-whoami
-id
-EOF
-
-log "Wuzapi post-installation completed"
-log "Log file is available at $LOG_FILE"
-
-echo "Wuzapi installation completed successfully!"
+log "Post-installation script completed."

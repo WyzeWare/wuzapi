@@ -23,12 +23,15 @@ import (
 	waLog "go.mau.fi/whatsmeow/util/log"
 	"gopkg.in/natefinch/lumberjack.v2"
 	_ "modernc.org/sqlite"
+
+	"wuzapi/internal/database"
 )
 
 type server struct {
-	db     *sql.DB
-	router *mux.Router
-	exPath string
+	db         *sql.DB
+	router     *mux.Router
+	exPath     string
+	debugSetup bool
 }
 
 var (
@@ -42,10 +45,12 @@ var (
 	sslprivkey = flag.String("sslprivatekey", "", "SSL Certificate Private Key File")
 	adminToken = flag.String("admintoken", "", "Security Token to authorize admin actions (list/create/remove users)")
 
-	configFile  = flag.String("config", "/etc/wuzapi/config", "Path to the configuration file")
-	postgresCfg = flag.String("postgresconfig", "/etc/wuzapi/postgres_config", "Path to the PostgreSQL configuration file")
+	configFile   = flag.String("config", "/etc/wuzapi/config", "Path to the configuration file")
+	saltFilePath = flag.String("salt", "/var/lib/wuzapi/salt", "Path to the salt file")
+	postgresCfg  = flag.String("postgresconfig", "/etc/wuzapi/postgres_config", "Path to the PostgreSQL configuration file")
 
 	dbType        string
+	salt          string
 	container     *sqlstore.Container
 	killchannel   = make(map[int](chan bool))
 	userinfocache = cache.New(5*time.Minute, 10*time.Minute)
@@ -82,9 +87,24 @@ func ParseConfigFile(filename string) (Config, error) {
 	return config, nil
 }
 
+// ReadSalt reads the salt from a file
+func ReadSalt(filePath string) (string, error) {
+	salt, err := os.ReadFile(filePath)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(salt)), nil
+}
+
 func init() {
 	flag.Parse()
 
+	var err error
+
+	salt, err = ReadSalt(*saltFilePath)
+	if err != nil {
+		log.Fatal().Err(err).Msg("Failed to read salt from file")
+	}
 	// Set up logging to file
 	logPath := "/var/log/wuzapi/wuzapi.log"
 	if os.Getenv("WUZAPI_LOG_PATH") != "" {
@@ -137,6 +157,12 @@ func main() {
 			log.Fatal().Err(err).Msg("Could not open SQLite WhatsApp database")
 		}
 
+		// Run SQLite migrations
+		migrationPaths := []string{"migrations/sqlite"}
+		if err := database.RunMigrations(appDB, "sqlite3", appDBPath, migrationPaths); err != nil {
+			log.Fatal().Err(err).Msg("Failed to apply SQLite migrations")
+		}
+
 	case "postgresql":
 		pgConfig, err := ParseConfigFile(*postgresCfg)
 		if err != nil {
@@ -162,6 +188,13 @@ func main() {
 		if err != nil {
 			log.Fatal().Err(err).Msg("Could not open PostgreSQL WhatsApp database")
 		}
+		// Run PostgreSQL migrations
+		if err := database.RunMigrations(appDB, "postgres", pgConfig["APP_DATABASE"], []string{"migrations/postgresql/wuzapi_app"}); err != nil {
+			log.Fatal().Err(err).Msg("Failed to apply PostgreSQL application migrations")
+		}
+		if err := database.RunMigrations(appDB, "postgres", pgConfig["WA_DATABASE"], []string{"migrations/postgresql/wuzapi_wa"}); err != nil {
+			log.Fatal().Err(err).Msg("Failed to apply PostgreSQL WhatsApp migrations")
+		}
 
 	default:
 		log.Fatal().Msg("Invalid database type specified")
@@ -183,9 +216,7 @@ func main() {
 	done := make(chan os.Signal, 1)
 	signal.Notify(done, os.Interrupt, syscall.SIGINT, syscall.SIGTERM)
 
-	var srv *http.Server
-
-	timeoutConfig := &http.Server{
+	srv := &http.Server{
 		Addr:              *address + ":" + *port,
 		Handler:           s.router,
 		ReadHeaderTimeout: 20 * time.Second,
@@ -194,21 +225,19 @@ func main() {
 		IdleTimeout:       180 * time.Second,
 	}
 
-	if *sslcert != "" && *sslprivkey != "" {
-		// TLS server
-		go func() {
-			if err := timeoutConfig.ListenAndServeTLS(*sslcert, *sslprivkey); err != nil && err != http.ErrServerClosed {
+	go func() {
+		if *sslcert != "" && *sslprivkey != "" {
+			// TLS server
+			if err := srv.ListenAndServeTLS(*sslcert, *sslprivkey); err != nil && err != http.ErrServerClosed {
 				log.Fatal().Err(err).Msg("Server startup failed")
 			}
-		}()
-	} else {
-		// Non-TLS server
-		go func() {
-			if err := timeoutConfig.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		} else {
+			// Non-TLS server
+			if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 				log.Fatal().Err(err).Msg("Server startup failed")
 			}
-		}()
-	}
+		}
+	}()
 
 	log.Info().Str("address", *address).Str("port", *port).Msg("Server started")
 
