@@ -21,8 +21,16 @@ require (
 )
 
 require (
+	github.com/golang-migrate/migrate/v4 v4.17.1 // indirect
+	github.com/hashicorp/errwrap v1.1.0 // indirect
+	github.com/hashicorp/go-multierror v1.1.1 // indirect
+	go.uber.org/atomic v1.11.0 // indirect
+)
+
+require (
 	filippo.io/edwards25519 v1.0.0 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
+	github.com/golang-migrate/migrate v3.5.4+incompatible
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/gorilla/websocket v1.5.0 // indirect
 	github.com/kballard/go-shellquote v0.0.0-20180428030007-95032a82bc51 // indirect
